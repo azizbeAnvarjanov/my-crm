@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -279,8 +280,13 @@ function AppSidebarContent({
     const [newBranchName, setNewBranchName] = React.useState("");
     const [creating, setCreating] = React.useState(false);
 
+    // Initialize queryClient
+    const queryClient = useQueryClient();
+
     const handleLogout = async () => {
         await supabase.auth.signOut();
+        // Clear all React Query cache to remove previous user data
+        queryClient.clear();
         router.push("/login");
         router.refresh();
     };

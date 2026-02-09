@@ -37,6 +37,8 @@ import {
     X,
     Check,
     Users,
+    ChevronLeft,
+    ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -447,6 +449,22 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     // All leads from all stages (for drag and drop)
     const [allLeads, setAllLeads] = useState<Lead[]>([]);
 
+    // Scroll container ref for horizontal scrolling
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+    // Scroll functions
+    const scrollLeft = () => {
+        if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollBy({ left: -400, behavior: 'smooth' });
+        }
+    };
+
+    const scrollRight = () => {
+        if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollBy({ left: 400, behavior: 'smooth' });
+        }
+    };
+
     const isAdmin = employee?.role === "super-admin";
     // For regular users, filter leads by their employee_id
     const employeeId = isAdmin ? null : employee?.id;
@@ -669,7 +687,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
             </div>
 
             {/* Kanban Board */}
-            <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
+            <div ref={scrollContainerRef} className="flex-1 overflow-x-auto overflow-y-hidden p-4">
                 {stagesLoading ? (
                     <div className="flex items-center justify-center h-full">
                         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -725,6 +743,26 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     </DndContext>
                 )}
             </div>
+
+            {/* Horizontal Scroll Buttons */}
+            {stages.length > 0 && (
+                <div className="fixed bottom-6 right-6 flex gap-2 z-50">
+                    <Button
+                        onClick={scrollLeft}
+                        size="icon"
+                        className="h-12 w-12 rounded-full shadow-lg bg-primary hover:bg-primary/90"
+                    >
+                        <ChevronLeft className="h-6 w-6" />
+                    </Button>
+                    <Button
+                        onClick={scrollRight}
+                        size="icon"
+                        className="h-12 w-12 rounded-full shadow-lg bg-primary hover:bg-primary/90"
+                    >
+                        <ChevronRight className="h-6 w-6" />
+                    </Button>
+                </div>
+            )}
 
             {/* Add Stage Dialog */}
             <Dialog open={isAddStageOpen} onOpenChange={setIsAddStageOpen}>

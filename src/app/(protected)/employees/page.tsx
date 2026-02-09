@@ -163,7 +163,7 @@ export default function EmployeesPage() {
     // Change role
     const handleChangeRole = async (employee: Employee, newRole: "super-admin" | "manager") => {
         try {
-            const updates: { role: string; access?: string[] } = { role: newRole };
+            const updates: { role: "super-admin" | "manager"; access?: string[] } = { role: newRole };
 
             // If promoting to super-admin, give all access
             if (newRole === "super-admin") {
@@ -180,7 +180,7 @@ export default function EmployeesPage() {
             // Update local state
             setEmployees((prev) =>
                 prev.map((e) =>
-                    e.id === employee.id ? { ...e, role: newRole, ...updates } : e
+                    e.id === employee.id ? { ...e, ...updates } : e
                 )
             );
         } catch (error) {
@@ -455,8 +455,8 @@ export default function EmployeesPage() {
                                             <label
                                                 key={page.path}
                                                 className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedAccess.includes(page.path)
-                                                        ? "bg-primary/5 border-primary/30"
-                                                        : "border-border hover:border-primary/20"
+                                                    ? "bg-primary/5 border-primary/30"
+                                                    : "border-border hover:border-primary/20"
                                                     }`}
                                             >
                                                 <Checkbox

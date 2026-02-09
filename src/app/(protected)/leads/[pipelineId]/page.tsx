@@ -11,6 +11,7 @@ import {
     PointerSensor,
     useSensor,
     useSensors,
+    useDroppable,
     DragStartEvent,
     DragEndEvent,
     DragOverEvent,
@@ -65,39 +66,68 @@ import {
     useUpdateStage,
     useDeleteStage,
     useMoveLead,
+    useUpdateLead,
     Stage,
     Lead,
     StageLeadsResult,
 } from "@/hooks/use-pipeline";
+import { LeadSheet } from "@/components/lead-sheet";
 
-// Sortable Lead Card Component
-function LeadCard({ lead, isDragging }: { lead: Lead; isDragging?: boolean }) {
+// Helper function to get time ago
+function getTimeAgo(dateString: string): string {
+    const now = new Date();
+    const date = new Date(dateString);
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMins < 1) return "hozir";
+    if (diffMins < 60) return `${diffMins} daqiqa avval`;
+    if (diffHours < 24) return `${diffHours} soat avval`;
+    if (diffDays === 1) return "kecha";
+    if (diffDays < 30) return `${diffDays} kun avval`;
+    if (diffDays < 365) return `${Math.floor(diffDays / 30)} oy avval`;
+    return `${Math.floor(diffDays / 365)} yil avval`;
+}
+
+// Draggable Lead Card Component
+function LeadCard({ lead, isMoving, onClick }: { lead: Lead; isMoving?: boolean; onClick?: (lead: Lead) => void }) {
     const {
         attributes,
         listeners,
         setNodeRef,
         transform,
-        transition,
-        isDragging: isSortableDragging,
-    } = useSortable({ id: lead.id });
+        isDragging,
+    } = useSortable({
+        id: lead.id,
+        data: { type: "lead", lead },
+    });
 
     const style = {
         transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isSortableDragging ? 0.5 : 1,
+        opacity: isDragging || isMoving ? 0.5 : 1,
+        zIndex: isDragging ? 1000 : 1,
     };
 
     return (
         <div
             ref={setNodeRef}
             style={style}
-            className={`bg-card border border-border rounded-lg p-3 cursor-grab active:cursor-grabbing hover:border-primary/30 transition-colors ${isDragging ? "shadow-lg ring-2 ring-primary" : ""
+            className={`bg-card border border-border rounded-lg p-3 transition-colors relative ${isDragging ? "shadow-lg ring-2 ring-primary cursor-grabbing" : "hover:border-primary/30 cursor-pointer"
                 }`}
-            {...attributes}
-            {...listeners}
         >
+            {isMoving && (
+                <div className="absolute inset-0 bg-background/50 backdrop-blur-[1px] flex items-center justify-center rounded-lg z-10">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                </div>
+            )}
+            {/* Drag Handle */}
             <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center gap-2">
+                <div
+                    className="flex items-center gap-2 flex-1"
+                    onClick={() => onClick?.(lead)}
+                >
                     <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
                         <User className="h-4 w-4 text-primary" />
                     </div>
@@ -108,10 +138,16 @@ function LeadCard({ lead, isDragging }: { lead: Lead; isDragging?: boolean }) {
                         <p className="text-xs text-muted-foreground">{lead.phone}</p>
                     </div>
                 </div>
-                <GripVertical className="h-4 w-4 text-muted-foreground" />
+                <div
+                    {...attributes}
+                    {...listeners}
+                    className="cursor-grab active:cursor-grabbing p-1 hover:bg-accent rounded"
+                >
+                    <GripVertical className="h-4 w-4 text-muted-foreground" />
+                </div>
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-1.5" onClick={() => onClick?.(lead)}>
                 {lead.phone_2 && (
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Phone className="h-3 w-3" />
@@ -132,7 +168,7 @@ function LeadCard({ lead, isDragging }: { lead: Lead; isDragging?: boolean }) {
                 )}
             </div>
 
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-border">
+            <div className="flex items-center justify-between mt-3 pt-2 border-t border-border" onClick={() => onClick?.(lead)}>
                 {lead.status && (
                     <Badge
                         variant="outline"
@@ -152,7 +188,7 @@ function LeadCard({ lead, isDragging }: { lead: Lead; isDragging?: boolean }) {
                 )}
                 {lead.updated_at && (
                     <span className="text-xs text-muted-foreground">
-                        {new Date(lead.updated_at).toLocaleDateString("uz-UZ")}
+                        {getTimeAgo(lead.updated_at)}
                     </span>
                 )}
             </div>
@@ -169,6 +205,8 @@ function StageColumn({
     isAdmin,
     onEditStage,
     onDeleteStage,
+    onLeadClick,
+    movingLeadId,
     allLeads,
     setAllLeads,
 }: {
@@ -179,10 +217,13 @@ function StageColumn({
     isAdmin: boolean;
     onEditStage: (stage: Stage) => void;
     onDeleteStage: (stage: Stage) => void;
+    onLeadClick: (lead: Lead) => void;
+    movingLeadId: string | null;
     allLeads: Lead[];
     setAllLeads: React.Dispatch<React.SetStateAction<Lead[]>>;
 }) {
     const containerRef = useRef<HTMLDivElement>(null);
+    const [scrollProgress, setScrollProgress] = useState(0);
 
     const { data: stageData, isLoading } = useStageLeads({
         stageId: stage.id,
@@ -208,14 +249,28 @@ function StageColumn({
         }
     }, [stageData, stage.id, setAllLeads]);
 
-    // Handle scroll for infinite loading
+    // Handle scroll for infinite loading and progress tracking
     const handleScroll = useCallback(() => {
-        if (!containerRef.current || !hasMore || loadMoreMutation.isPending) return;
+        if (!containerRef.current) return;
 
         const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-        const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100;
 
-        if (isNearBottom) {
+        // Calculate scroll progress percentage
+        const maxScroll = scrollHeight - clientHeight;
+        if (maxScroll > 0) {
+            const progress = (scrollTop / maxScroll) * 100;
+            setScrollProgress(Math.min(progress, 100));
+        } else {
+            setScrollProgress(0);
+        }
+
+        // Load more when near bottom - slightly larger threshold (150px) for reliability
+        if (!hasMore || loadMoreMutation.isPending) return;
+
+        // Use a more robust check for bottom
+        const isNearBottom = scrollTop + clientHeight >= scrollHeight - 150;
+
+        if (isNearBottom && !loadMoreMutation.isPending) {
             loadMoreMutation.mutate({
                 stageId: stage.id,
                 pipelineId,
@@ -226,7 +281,8 @@ function StageColumn({
         }
     }, [hasMore, loadMoreMutation, stage.id, pipelineId, employeeId, searchQuery, leads.length]);
 
-    const { setNodeRef, isOver } = useSortable({
+    // Use droppable for stage (drop zone for leads)
+    const { setNodeRef, isOver } = useDroppable({
         id: stage.id,
         data: { type: "stage", stage },
     });
@@ -238,38 +294,52 @@ function StageColumn({
                 }`}
         >
             {/* Stage Header */}
-            <div
-                className="p-3 border-b border-border flex items-center justify-between sticky top-0 bg-accent/50 backdrop-blur-sm rounded-t-xl"
-                style={{ borderLeft: `4px solid ${stage.color || "#6366f1"}` }}
-            >
-                <div className="flex items-center gap-2">
-                    <h3 className="font-medium text-foreground">{stage.name}</h3>
-                    <Badge variant="secondary" className="text-xs">
-                        {totalCount}
-                    </Badge>
+            <div className="sticky top-0 z-10 bg-accent/50 backdrop-blur-sm rounded-t-xl">
+                <div
+                    className="p-3 border-b border-border flex items-center justify-between"
+                    style={{ borderLeft: `4px solid ${stage.color || "#6366f1"}` }}
+                >
+                    <div className="flex items-center gap-2">
+                        <h3 className="font-medium text-foreground">{stage.name}</h3>
+                        <Badge variant="secondary" className="text-xs">
+                            {totalCount}
+                        </Badge>
+                    </div>
+                    {isAdmin && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="bg-popover border-border">
+                                <DropdownMenuItem onClick={() => onEditStage(stage)}>
+                                    <Edit2 className="h-4 w-4 mr-2" />
+                                    Tahrirlash
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                    onClick={() => onDeleteStage(stage)}
+                                    className="text-destructive focus:text-destructive"
+                                >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    O'chirish
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
                 </div>
-                {isAdmin && (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-7 w-7">
-                                <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-popover border-border">
-                            <DropdownMenuItem onClick={() => onEditStage(stage)}>
-                                <Edit2 className="h-4 w-4 mr-2" />
-                                Tahrirlash
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                                onClick={() => onDeleteStage(stage)}
-                                className="text-destructive focus:text-destructive"
-                            >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                O'chirish
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                {/* Scroll Progress Bar */}
+                {scrollProgress > 0 && (
+                    <div className="h-1 bg-accent/30 relative overflow-hidden">
+                        <div
+                            className="h-full bg-primary transition-all duration-150"
+                            style={{
+                                width: `${scrollProgress}%`,
+                                backgroundColor: stage.color || "#6366f1",
+                            }}
+                        />
+                    </div>
                 )}
             </div>
 
@@ -287,7 +357,12 @@ function StageColumn({
                     <>
                         <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
                             {leads.map((lead) => (
-                                <LeadCard key={lead.id} lead={lead} />
+                                <LeadCard
+                                    key={lead.id}
+                                    lead={lead}
+                                    isMoving={movingLeadId === lead.id}
+                                    onClick={onLeadClick}
+                                />
                             ))}
                         </SortableContext>
 
@@ -308,10 +383,24 @@ function StageColumn({
                         )}
 
                         {hasMore && !loadMoreMutation.isPending && (
-                            <div className="text-center py-2">
-                                <span className="text-xs text-muted-foreground">
-                                    {leads.length} / {totalCount} lid
-                                </span>
+                            <div className="text-center py-4 border-t border-border/10 mt-2">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="w-full text-muted-foreground hover:text-primary transition-colors text-xs gap-2"
+                                    onClick={() => {
+                                        loadMoreMutation.mutate({
+                                            stageId: stage.id,
+                                            pipelineId,
+                                            employeeId,
+                                            searchQuery,
+                                            offset: leads.length,
+                                        });
+                                    }}
+                                >
+                                    <Plus className="h-3 w-3" />
+                                    Yuklash ({leads.length} / {totalCount})
+                                </Button>
                             </div>
                         )}
                     </>
@@ -345,12 +434,15 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const updateStageMutation = useUpdateStage();
     const deleteStageMutation = useDeleteStage();
     const moveLeadMutation = useMoveLead();
+    const updateLeadMutation = useUpdateLead();
 
     const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
     const [isAddStageOpen, setIsAddStageOpen] = useState(false);
     const [newStageName, setNewStageName] = useState("");
     const [newStageColor, setNewStageColor] = useState("#6366f1");
     const [editingStage, setEditingStage] = useState<Stage | null>(null);
+    const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+    const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
 
     // All leads from all stages (for drag and drop)
     const [allLeads, setAllLeads] = useState<Lead[]>([]);
@@ -371,6 +463,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     // Find active lead for drag overlay
     const activeLead = useMemo(() => {
         if (!activeLeadId) return null;
+        // Search in allLeads which is aggregated from all stages
         return allLeads.find((l) => l.id === activeLeadId) || null;
     }, [activeLeadId, allLeads]);
 
@@ -389,40 +482,48 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
         if (!over) return;
 
+        const activeData = active.data.current;
+        const overData = over.data.current;
+
+        // Check if we're dragging a lead
+        if (!activeData || activeData.type !== "lead") return;
+        const lead = activeData.lead as Lead;
         const activeId = active.id as string;
-        const overId = over.id as string;
 
-        // Find which stage the lead was dropped on
-        const lead = allLeads.find((l) => l.id === activeId);
-        if (!lead) return;
+        // Determine target stage ID
+        let targetStageId: string | null = null;
 
-        // Check if dropped on a stage or another lead
-        let targetStageId = overId;
-
-        // If dropped on a lead, find its stage
-        const targetLead = allLeads.find((l) => l.id === overId);
-        if (targetLead) {
-            targetStageId = targetLead.stage_id;
+        if (overData?.type === "stage") {
+            targetStageId = overData.stage.id;
+        } else if (overData?.type === "lead") {
+            targetStageId = (overData.lead as Lead).stage_id;
+        } else {
+            // Fallback: if overId is one of the stage IDs
+            const overId = over.id as string;
+            if (stages.some(s => s.id === overId)) {
+                targetStageId = overId;
+            }
         }
 
-        // Check if it's a valid stage
-        const targetStage = stages.find((s) => s.id === targetStageId);
-        if (!targetStage && !targetLead) return;
+        // If no target stage or same stage, cancel
+        if (!targetStageId || lead.stage_id === targetStageId) return;
 
-        // If dropped on itself or same stage, do nothing
-        if (lead.stage_id === targetStageId) return;
-
-        // Move the lead
+        // Execute move mutation
         moveLeadMutation.mutate({
             leadId: activeId,
             newStageId: targetStageId,
+            oldStageId: lead.stage_id,
             pipelineId,
+            employeeId,
+            searchQuery: debouncedSearch,
         });
 
-        // Optimistic update for allLeads
+        // Optimistic update for allLeads to reflect change immediately
+        // We set updated_at to now so it stays at the bottom (oldest first logic)
+        // or moves according to the user's sorting preference.
         setAllLeads((prev) =>
             prev.map((l) =>
-                l.id === activeId ? { ...l, stage_id: targetStageId } : l
+                l.id === activeId ? { ...l, stage_id: targetStageId!, updated_at: new Date().toISOString() } : l
             )
         );
     };
@@ -466,6 +567,25 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
             id: stage.id,
             pipelineId,
         });
+    };
+
+    // Lead sheet handlers
+    const handleLeadClick = (lead: Lead) => {
+        setSelectedLead(lead);
+        setIsLeadSheetOpen(true);
+    };
+
+    const handleCloseLeadSheet = () => {
+        setIsLeadSheetOpen(false);
+        setTimeout(() => setSelectedLead(null), 200);
+    };
+
+    const handleUpdateLead = async (leadId: string, updates: Partial<Lead>) => {
+        await updateLeadMutation.mutateAsync({ id: leadId, ...updates });
+        // Update selectedLead if still viewing
+        if (selectedLead?.id === leadId) {
+            setSelectedLead(prev => prev ? { ...prev, ...updates } : null);
+        }
     };
 
     const stageColors = [
@@ -590,6 +710,8 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                                     isAdmin={isAdmin}
                                     onEditStage={setEditingStage}
                                     onDeleteStage={handleDeleteStage}
+                                    onLeadClick={handleLeadClick}
+                                    movingLeadId={moveLeadMutation.isPending && moveLeadMutation.variables ? (moveLeadMutation.variables as any).leadId : null}
                                     allLeads={allLeads}
                                     setAllLeads={setAllLeads}
                                 />
@@ -598,7 +720,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
                         {/* Drag Overlay */}
                         <DragOverlay>
-                            {activeLead && <LeadCard lead={activeLead} isDragging />}
+                            {activeLead && <LeadCard lead={activeLead} />}
                         </DragOverlay>
                     </DndContext>
                 )}
@@ -725,6 +847,16 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* Lead Details Sheet */}
+            <LeadSheet
+                lead={selectedLead}
+                isOpen={isLeadSheetOpen}
+                onClose={handleCloseLeadSheet}
+                stages={stages}
+                onUpdateLead={handleUpdateLead}
+                isUpdating={updateLeadMutation.isPending}
+            />
         </div>
     );
 }

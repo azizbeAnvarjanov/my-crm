@@ -288,7 +288,7 @@ export function useStageLeads({
                 `)
                 .eq("stage_id", stageId)
                 .eq("pipeline_id", pipelineId)
-                .order("created_at", { ascending: false })
+                .order("updated_at", { ascending: true }) // Oldest updated first
                 .limit(limit);
 
             if (employeeId) {
@@ -336,7 +336,7 @@ export function useLoadMoreStageLeads() {
                 `)
                 .eq("stage_id", stageId)
                 .eq("pipeline_id", pipelineId)
-                .order("created_at", { ascending: false })
+                .order("updated_at", { ascending: true }) // Oldest updated first
                 .range(offset, offset + limit - 1);
 
             if (employeeId) {
@@ -356,6 +356,7 @@ export function useLoadMoreStageLeads() {
                 stageId,
                 employeeId,
                 searchQuery,
+                limit,
             };
         },
         onSuccess: (data) => {
@@ -369,7 +370,7 @@ export function useLoadMoreStageLeads() {
                     return {
                         ...old,
                         leads: [...old.leads, ...newLeads],
-                        hasMore: data.leads.length === 50,
+                        hasMore: data.leads.length >= data.limit,
                     };
                 }
             );
@@ -404,9 +405,16 @@ export function useUpdateLead() {
     return useMutation({
         mutationFn: async ({ id, ...updates }: Partial<Lead> & { id: string }) => {
             const supabase = createClient();
+
+            // Add updated_at manually to ensure it changes
+            const updatesWithTimestamp = {
+                ...updates,
+                updated_at: new Date().toISOString()
+            };
+
             const { data, error } = await supabase
                 .from("leads")
-                .update(updates)
+                .update(updatesWithTimestamp)
                 .eq("id", id)
                 .select()
                 .single();
@@ -414,8 +422,56 @@ export function useUpdateLead() {
             if (error) throw error;
             return data as Lead;
         },
-        onSuccess: (data) => {
-            queryClient.invalidateQueries({ queryKey: leadKeys.byPipeline(data.pipeline_id) });
+        onMutate: async ({ id, ...updates }) => {
+            // Optimistic update
+            const updatesWithTimestamp = {
+                ...updates,
+                updated_at: new Date().toISOString()
+            };
+
+            // 1. Update general leads list
+            await queryClient.cancelQueries({ queryKey: leadKeys.all });
+
+            // Iterate over all lead queries to find and update the lead
+            const previousLeadsData = queryClient.getQueriesData<Lead[]>({ queryKey: leadKeys.all });
+            queryClient.setQueriesData<Lead[]>({ queryKey: leadKeys.all }, (old) => {
+                if (!old) return old;
+                return old.map(lead => lead.id === id ? { ...lead, ...updatesWithTimestamp } : lead);
+            });
+
+            // 2. Update stage leads lists
+            const previousStageLeadsData = queryClient.getQueriesData<StageLeadsResult>({ queryKey: stageLeadKeys.base });
+            queryClient.setQueriesData<StageLeadsResult>({ queryKey: stageLeadKeys.base }, (old) => {
+                if (!old) return old;
+                const leadExists = old.leads.some(l => l.id === id);
+                if (!leadExists) return old;
+
+                return {
+                    ...old,
+                    leads: old.leads.map(l => l.id === id ? { ...l, ...updatesWithTimestamp } : l)
+                };
+            });
+
+            return { previousLeadsData, previousStageLeadsData };
+        },
+        onError: (err, variables, context) => {
+            // Revert changes
+            if (context?.previousLeadsData) {
+                context.previousLeadsData.forEach(([key, data]) => {
+                    queryClient.setQueryData(key, data);
+                });
+            }
+            if (context?.previousStageLeadsData) {
+                context.previousStageLeadsData.forEach(([key, data]) => {
+                    queryClient.setQueryData(key, data);
+                });
+            }
+        },
+        onSettled: (data) => {
+            if (data?.pipeline_id) {
+                queryClient.invalidateQueries({ queryKey: leadKeys.byPipeline(data.pipeline_id) });
+            }
+            queryClient.invalidateQueries({ queryKey: stageLeadKeys.base });
         },
     });
 }
@@ -424,7 +480,19 @@ export function useMoveLead() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ leadId, newStageId, pipelineId }: { leadId: string; newStageId: string; pipelineId: string }) => {
+        mutationFn: async ({
+            leadId,
+            newStageId,
+            pipelineId
+        }: {
+            leadId: string;
+            newStageId: string;
+            oldStageId: string; // Used for optimistic update context
+            pipelineId: string;
+            // Additional context for optimistic updates
+            employeeId?: string | null;
+            searchQuery?: string;
+        }) => {
             const supabase = createClient();
             const { data, error } = await supabase
                 .from("leads")
@@ -436,31 +504,90 @@ export function useMoveLead() {
             if (error) throw error;
             return { ...data, pipelineId } as Lead & { pipelineId: string };
         },
-        onMutate: async ({ leadId, newStageId, pipelineId }) => {
+        onMutate: async ({ leadId, newStageId, oldStageId, pipelineId, employeeId, searchQuery }) => {
             // Optimistic update
-            await queryClient.cancelQueries({ queryKey: leadKeys.byPipeline(pipelineId) });
 
+            // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
+            await queryClient.cancelQueries({ queryKey: leadKeys.byPipeline(pipelineId) });
+            await queryClient.cancelQueries({ queryKey: stageLeadKeys.base });
+
+            // Snapshot the previous value
             const previousLeads = queryClient.getQueryData<Lead[]>(leadKeys.byPipeline(pipelineId));
 
+            // Get keys for source and destination stages
+            const sourceKey = stageLeadKeys.byStage(oldStageId, employeeId, searchQuery);
+            const destKey = stageLeadKeys.byStage(newStageId, employeeId, searchQuery);
+
+            const previousSourceData = queryClient.getQueryData<StageLeadsResult>(sourceKey);
+            const previousDestData = queryClient.getQueryData<StageLeadsResult>(destKey);
+
+            let movedLead: Lead | undefined;
+
+            // 1. Update source stage: remove lead
+            queryClient.setQueryData<StageLeadsResult>(sourceKey, (old) => {
+                if (!old) return old;
+                movedLead = old.leads.find(l => l.id === leadId);
+                if (!movedLead) return old;
+
+                return {
+                    ...old,
+                    leads: old.leads.filter(l => l.id !== leadId),
+                    totalCount: Math.max(0, old.totalCount - 1)
+                };
+            });
+
+            // 2. Update destination stage: add lead
+            if (movedLead) {
+                const updatedLead = {
+                    ...movedLead,
+                    stage_id: newStageId,
+                    updated_at: new Date().toISOString()
+                };
+
+                queryClient.setQueryData<StageLeadsResult>(destKey, (old) => {
+                    // If dest stage hasn't been loaded yet, we might not have data. 
+                    // But if it has, we prepend/append.
+                    if (!old) return {
+                        leads: [updatedLead],
+                        hasMore: false,
+                        totalCount: 1
+                    };
+
+                    return {
+                        ...old,
+                        leads: [updatedLead, ...old.leads],
+                        totalCount: old.totalCount + 1
+                    };
+                });
+            }
+
+            // 3. Update global list (if used)
             if (previousLeads) {
                 queryClient.setQueryData<Lead[]>(
                     leadKeys.byPipeline(pipelineId),
                     previousLeads.map((lead) =>
-                        lead.id === leadId ? { ...lead, stage_id: newStageId } : lead
+                        lead.id === leadId ? { ...lead, stage_id: newStageId, updated_at: new Date().toISOString() } : lead
                     )
                 );
             }
 
-            return { previousLeads };
+            return { previousLeads, previousSourceData, previousDestData, sourceKey, destKey };
         },
         onError: (err, variables, context) => {
             if (context?.previousLeads) {
                 queryClient.setQueryData(leadKeys.byPipeline(variables.pipelineId), context.previousLeads);
             }
+            if (context?.previousSourceData) {
+                queryClient.setQueryData(context.sourceKey, context.previousSourceData);
+            }
+            if (context?.previousDestData) {
+                queryClient.setQueryData(context.destKey, context.previousDestData);
+            }
         },
         onSettled: (data) => {
             if (data?.pipelineId) {
                 queryClient.invalidateQueries({ queryKey: leadKeys.byPipeline(data.pipelineId) });
+                queryClient.invalidateQueries({ queryKey: stageLeadKeys.base });
             }
         },
     });

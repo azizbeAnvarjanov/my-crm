@@ -450,7 +450,7 @@ export default function NotAssignedLeadsPage() {
                                     </SelectTrigger>
                                     <SelectContent>
                                         {managers.map((manager) => (
-                                            <SelectItem key={manager.id} value={manager.employee_id}>
+                                            <SelectItem key={manager.id} value={manager.id}>
                                                 <div className="flex items-center gap-2">
                                                     <span>{manager.name}</span>
                                                     <span className="text-xs text-muted-foreground">

@@ -57,6 +57,7 @@ export function LeadSheet({
 }: LeadSheetProps) {
     const [editedLead, setEditedLead] = useState<Partial<Lead>>({});
     const [hasChanges, setHasChanges] = useState(false);
+    const [loading, setLoading] = useState(false);
     const [calls, setCalls] = useState<Call[]>([]);
     const [loadingCalls, setLoadingCalls] = useState(false);
     const [playingCallId, setPlayingCallId] = useState<string | null>(null);
@@ -337,9 +338,41 @@ export function LeadSheet({
                                                 type="button"
                                                 size="icon"
                                                 variant="outline"
-                                                onClick={() => handleCall(editedLead.phone || lead?.phone || "")}
                                                 disabled={!editedLead.phone && !lead?.phone}
                                                 className="flex-shrink-0"
+                                                onClick={async () => {
+                                                    const phone = editedLead.phone || lead?.phone;
+                                                    if (!phone) return;
+
+                                                    try {
+                                                        setLoading(true);
+
+                                                        const res = await fetch("/api/moizvonki/call", {
+                                                            method: "POST",
+                                                            headers: {
+                                                                "Content-Type": "application/json",
+                                                            },
+                                                            body: JSON.stringify({
+                                                                phone: phone,
+                                                            }),
+                                                        });
+
+                                                        const data = await res.json().catch(() => ({}));
+
+                                                        if (!res.ok || data?.ok === false) {
+                                                            console.error(data);
+                                                            alert("Qo‘ng‘iroq yuborilmadi");
+                                                            return;
+                                                        }
+
+                                                        alert("📞 Qo‘ng‘iroq yuborildi");
+                                                    } catch (err) {
+                                                        console.error(err);
+                                                        alert("Server xatosi");
+                                                    } finally {
+                                                        setLoading(false);
+                                                    }
+                                                }}
                                             >
                                                 <Phone className="h-4 w-4" />
                                             </Button>
@@ -359,13 +392,45 @@ export function LeadSheet({
                                                     placeholder="+998 90 123 45 67"
                                                 />
                                             </div>
-                                            <Button
+                                              <Button
                                                 type="button"
                                                 size="icon"
                                                 variant="outline"
-                                                onClick={() => handleCall(editedLead.phone_2 || lead?.phone_2 || "")}
-                                                disabled={!editedLead.phone_2 && !lead?.phone_2}
+                                                disabled={!editedLead.phone && !lead?.phone}
                                                 className="flex-shrink-0"
+                                                onClick={async () => {
+                                                    const phone = editedLead.phone || lead?.phone;
+                                                    if (!phone) return;
+
+                                                    try {
+                                                        setLoading(true);
+
+                                                        const res = await fetch("/api/moizvonki/call", {
+                                                            method: "POST",
+                                                            headers: {
+                                                                "Content-Type": "application/json",
+                                                            },
+                                                            body: JSON.stringify({
+                                                                phone: phone,
+                                                            }),
+                                                        });
+
+                                                        const data = await res.json().catch(() => ({}));
+
+                                                        if (!res.ok || data?.ok === false) {
+                                                            console.error(data);
+                                                            alert("Qo‘ng‘iroq yuborilmadi");
+                                                            return;
+                                                        }
+
+                                                        alert("📞 Qo‘ng‘iroq yuborildi");
+                                                    } catch (err) {
+                                                        console.error(err);
+                                                        alert("Server xatosi");
+                                                    } finally {
+                                                        setLoading(false);
+                                                    }
+                                                }}
                                             >
                                                 <Phone className="h-4 w-4" />
                                             </Button>

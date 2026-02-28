@@ -95,9 +95,8 @@ const navItems: NavItem[] = [
     { title: "Asosiy sahifa", href: "/", icon: LayoutDashboard, category: "asosiy" },
 
     // CRM
-    { title: "Pipelines", href: "/pipelines", icon: GitBranch, category: "crm" },
+    { title: "Voronkalar", href: "/pipelines", icon: GitBranch, category: "crm" },
     { title: "Eslatmalar", href: "/notes", icon: StickyNote, category: "crm" },
-    { title: "Yangi lidlar", href: "/leads", icon: UserPlus, category: "crm" },
     { title: "Biriktirilmagan", href: "/not-assigned-leads", icon: Users, category: "crm" },
     { title: "Formalar", href: "/forms", icon: FileText, category: "crm" },
 

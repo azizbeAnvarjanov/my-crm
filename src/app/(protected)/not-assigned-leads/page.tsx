@@ -12,7 +12,6 @@ import {
     ChevronRight,
     UserCheck,
     Search,
-    Building2,
     GitBranch,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -63,12 +62,11 @@ interface Manager {
 const ITEMS_PER_PAGE = 20;
 
 export default function NotAssignedLeadsPage() {
-    const supabase = createClient();
-    const { selectedBranch, branches } = useBranch();
+    const { selectedBranch } = useBranch();
+    const branchId = selectedBranch?.id;
     const { data: currentEmployee, isLoading: employeeLoading } = useEmployee();
 
-    // Branch & Pipeline filter state
-    const [selectedBranchId, setSelectedBranchId] = useState<string>("");
+    // Pipeline filter state
     const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
 
     const [leads, setLeads] = useState<Lead[]>([]);
@@ -88,21 +86,19 @@ export default function NotAssignedLeadsPage() {
 
     // Permissions
     const isAdmin = currentEmployee?.role === "super-admin";
+    const supabase = createClient();
 
     // Fetch pipelines for selected branch
-    const { data: pipelines, isLoading: pipelinesLoading } = usePipelines(selectedBranchId || null);
+    const { data: pipelines, isLoading: pipelinesLoading } = usePipelines(branchId || null);
 
-    // Auto-select branch from sidebar
+    // Reset pipeline when branch changes
     useEffect(() => {
-        if (selectedBranch?.id && !selectedBranchId) {
-            setSelectedBranchId(selectedBranch.id);
-        }
-    }, [selectedBranch]);
+        setSelectedPipelineId("");
+    }, [branchId]);
 
-    // Auto-select first pipeline when pipelines load or branch changes
+    // Auto-select first pipeline when pipelines load
     useEffect(() => {
         if (pipelines && pipelines.length > 0) {
-            // Check if current selection is still valid
             const currentStillValid = pipelines.some(p => p.id === selectedPipelineId);
             if (!currentStillValid) {
                 setSelectedPipelineId(pipelines[0].id);
@@ -112,22 +108,22 @@ export default function NotAssignedLeadsPage() {
         }
     }, [pipelines]);
 
-    // Reset page when filters change
+    // Reset page when pipeline changes
     useEffect(() => {
         setCurrentPage(1);
         setSelectedLeads([]);
-    }, [selectedBranchId, selectedPipelineId]);
+    }, [selectedPipelineId]);
 
     // Fetch managers from the selected branch
     useEffect(() => {
-        if (!selectedBranchId || !isAdmin) return;
+        if (!branchId || !isAdmin) return;
 
         const fetchManagers = async () => {
             try {
                 const { data, error } = await supabase
                     .from("xodimlar")
                     .select("id, employee_id, name, email, role, branch_id")
-                    .eq("branch_id", selectedBranchId)
+                    .eq("branch_id", branchId)
                     .eq("role", "manager")
                     .order("name");
 
@@ -139,7 +135,7 @@ export default function NotAssignedLeadsPage() {
         };
 
         fetchManagers();
-    }, [selectedBranchId, isAdmin, supabase]);
+    }, [branchId, isAdmin, supabase]);
 
     // Fetch leads with employee_id = null filtered by pipeline
     useEffect(() => {
@@ -245,13 +241,6 @@ export default function NotAssignedLeadsPage() {
         }
     };
 
-    // Handle branch change
-    const handleBranchChange = (branchId: string) => {
-        setSelectedBranchId(branchId);
-        setSelectedPipelineId(""); // Reset pipeline when branch changes
-        setSearchQuery("");
-    };
-
     // Handle pipeline change
     const handlePipelineChange = (pipelineId: string) => {
         setSelectedPipelineId(pipelineId);
@@ -277,15 +266,31 @@ export default function NotAssignedLeadsPage() {
         }
     };
 
+    const goToPage = (page: number) => {
+        setCurrentPage(page);
+        setSelectedLeads([]);
+    };
+
+    // Generate page numbers to show
+    const getPageNumbers = (): (number | "...")[] => {
+        if (totalPages <= 7) {
+            return Array.from({ length: totalPages }, (_, i) => i + 1);
+        }
+        const pages: (number | "...")[] = [];
+        if (currentPage <= 3) {
+            pages.push(1, 2, 3, 4, "...", totalPages);
+        } else if (currentPage >= totalPages - 2) {
+            pages.push(1, "...", totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+        } else {
+            pages.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages);
+        }
+        return pages;
+    };
+
     // Get current pipeline name
     const currentPipeline = useMemo(() => {
         return pipelines?.find(p => p.id === selectedPipelineId);
     }, [pipelines, selectedPipelineId]);
-
-    // Get current branch name
-    const currentBranch = useMemo(() => {
-        return branches?.find(b => b.id === selectedBranchId);
-    }, [branches, selectedBranchId]);
 
     // Loading state
     if (employeeLoading) {
@@ -338,28 +343,8 @@ export default function NotAssignedLeadsPage() {
                 )}
             </div>
 
-            {/* Filters: Branch + Pipeline */}
+            {/* Filters: Pipeline */}
             <div className="flex flex-wrap items-end gap-5">
-                {/* Branch select */}
-                <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                        <Building2 className="h-3.5 w-3.5" />
-                        Filial
-                    </label>
-                    <Select value={selectedBranchId} onValueChange={handleBranchChange}>
-                        <SelectTrigger>
-                            <SelectValue placeholder="Filial tanlang" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {branches.map((branch) => (
-                                <SelectItem key={branch.id} value={branch.id}>
-                                    {branch.name}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-
                 {/* Pipeline select */}
                 <div className="space-y-1.5">
                     <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -369,17 +354,15 @@ export default function NotAssignedLeadsPage() {
                     <Select
                         value={selectedPipelineId}
                         onValueChange={handlePipelineChange}
-                        disabled={!selectedBranchId || pipelinesLoading}
+                        disabled={pipelinesLoading}
                     >
                         <SelectTrigger>
                             <SelectValue placeholder={
                                 pipelinesLoading
                                     ? "Yuklanmoqda..."
-                                    : !selectedBranchId
-                                        ? "Avval filial tanlang"
-                                        : pipelines?.length === 0
-                                            ? "Pipeline topilmadi"
-                                            : "Pipeline tanlang"
+                                    : pipelines?.length === 0
+                                        ? "Pipeline topilmadi"
+                                        : "Pipeline tanlang"
                             } />
                         </SelectTrigger>
                         <SelectContent>
@@ -433,9 +416,9 @@ export default function NotAssignedLeadsPage() {
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                         Lidlar ro&apos;yxati
-                        {currentBranch && currentPipeline && (
+                        {selectedBranch && currentPipeline && (
                             <span className="text-sm font-normal text-muted-foreground">
-                                — {currentBranch.name} / {currentPipeline.name}
+                                — {selectedBranch.name} / {currentPipeline.name}
                             </span>
                         )}
                     </CardTitle>
@@ -541,30 +524,47 @@ export default function NotAssignedLeadsPage() {
                         </>
                     )}
 
-                    {/* Pagination */}
+                    {/* Pagination with page numbers */}
                     {totalPages > 1 && (
                         <div className="flex items-center justify-between mt-6 pt-6 border-t border-border">
                             <div className="text-sm text-muted-foreground">
-                                Sahifa {currentPage} / {totalPages}
+                                Sahifa {currentPage} / {totalPages} ({totalCount} ta lid)
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                                 <Button
                                     variant="outline"
-                                    size="sm"
+                                    size="icon"
+                                    className="h-8 w-8"
                                     onClick={handlePreviousPage}
                                     disabled={!canGoPrevious}
                                 >
-                                    <ChevronLeft className="h-4 w-4 mr-1" />
-                                    Orqaga
+                                    <ChevronLeft className="h-4 w-4" />
                                 </Button>
+                                {getPageNumbers().map((page, idx) =>
+                                    page === "..." ? (
+                                        <span key={`dots-${idx}`} className="px-1.5 text-sm text-muted-foreground">
+                                            ...
+                                        </span>
+                                    ) : (
+                                        <Button
+                                            key={page}
+                                            variant={currentPage === page ? "default" : "outline"}
+                                            size="icon"
+                                            className="h-8 w-8 text-xs"
+                                            onClick={() => goToPage(page)}
+                                        >
+                                            {page}
+                                        </Button>
+                                    )
+                                )}
                                 <Button
                                     variant="outline"
-                                    size="sm"
+                                    size="icon"
+                                    className="h-8 w-8"
                                     onClick={handleNextPage}
                                     disabled={!canGoNext}
                                 >
-                                    Keyingi
-                                    <ChevronRight className="h-4 w-4 ml-1" />
+                                    <ChevronRight className="h-4 w-4" />
                                 </Button>
                             </div>
                         </div>

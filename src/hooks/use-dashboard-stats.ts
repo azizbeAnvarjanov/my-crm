@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 export interface DashboardStats {
     // Leads statistikasi (pipeline bo'yicha)
     total_leads: number;
+    unassigned_leads: number; // employee_id = null
     leads_today: number;
     leads_week: number;
     leads_month: number;
@@ -97,8 +98,8 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
             const threeDaysLater = new Date(today);
             threeDaysLater.setDate(threeDaysLater.getDate() + 3);
 
-            // Leads statistikasi (pipeline + dateRange bo'yicha filter)
-            let totalLeadsQuery = applyDateRange(supabase.from("leads").select("*", { count: "exact", head: true }), dateRange);
+            // Leads statistikasi (pipeline bo'yicha — jami soni sana filtrisiz)
+            let totalLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true });
             let todayLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("created_at", today.toISOString());
             let weekLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("created_at", weekAgo.toISOString());
             let monthLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("created_at", monthAgo.toISOString());
@@ -188,8 +189,16 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
                 updatedMonthQuery,
             ]);
 
+            // Biriktirilmagan lidlar (employee_id = null, pipeline bo'yicha)
+            let unassignedQuery = supabase.from("leads").select("*", { count: "exact", head: true }).is("employee_id", null);
+            if (pipelineId) {
+                unassignedQuery = unassignedQuery.eq("pipeline_id", pipelineId);
+            }
+            const { count: unassigned_leads } = await unassignedQuery;
+
             return {
                 total_leads: total_leads || 0,
+                unassigned_leads: unassigned_leads || 0,
                 leads_today: leads_today || 0,
                 leads_week: leads_week || 0,
                 leads_month: leads_month || 0,
@@ -254,20 +263,17 @@ export function useLeadsByStage(pipelineId?: string) {
     });
 }
 
-// Xodimlar konversiyasi (branch bo'yicha)
-export function useEmployeeConversion(branchId: string | null, conversionStageId?: string) {
+// Xodimlar konversiyasi (barcha xodimlar)
+export function useEmployeeConversion(conversionStageId?: string) {
     const supabase = createClient();
 
     return useQuery({
-        queryKey: ["employee-conversion", branchId, conversionStageId],
+        queryKey: ["employee-conversion", conversionStageId],
         queryFn: async () => {
-            if (!branchId) return [];
-
-            // 1. Branchdagi barcha xodimlarni olamiz
+            // 1. Barcha xodimlarni olamiz
             const { data: employees, error: empError } = await supabase
                 .from("xodimlar")
-                .select("id, name")
-                .eq("branch_id", branchId);
+                .select("id, name");
 
             if (empError) throw empError;
             if (!employees?.length) return [];
@@ -307,7 +313,6 @@ export function useEmployeeConversion(branchId: string | null, conversionStageId
 
             return results.sort((a, b) => b.total_leads - a.total_leads);
         },
-        enabled: !!branchId,
     });
 }
 
@@ -430,5 +435,165 @@ export function useLeadsTrend(period: "day" | "week" | "month" | "year", pipelin
 
             return result;
         },
+    });
+}
+
+// =========================
+// UTM Analytics
+// =========================
+
+export interface UtmAnalyticsItem {
+    utm_source: string;
+    count: number;
+    percentage: number;
+}
+
+export function useUtmAnalytics(pipelineId?: string, dateRange?: DashboardDateRange) {
+    const supabase = createClient();
+
+    return useQuery({
+        queryKey: ["utm-analytics", pipelineId, dateRange?.startDate, dateRange?.endDate],
+        queryFn: async () => {
+            // Fetch all leads with utm field for the pipeline
+            let query = supabase
+                .from("leads")
+                .select("utm");
+
+            if (pipelineId) {
+                query = query.eq("pipeline_id", pipelineId);
+            }
+
+            query = applyDateRange(query, dateRange);
+
+            const { data, error } = await query;
+            if (error) throw error;
+            if (!data?.length) return [];
+
+            // Group by UTM source
+            const utmMap: Record<string, number> = {};
+            data.forEach((lead: { utm: string | null }) => {
+                const source = (lead.utm || "").trim();
+                if (!source) {
+                    utmMap["Noma'lum"] = (utmMap["Noma'lum"] || 0) + 1;
+                } else {
+                    // Normalize: capitalize first letter
+                    const normalized = source.charAt(0).toUpperCase() + source.slice(1).toLowerCase();
+                    utmMap[normalized] = (utmMap[normalized] || 0) + 1;
+                }
+            });
+
+            const total = data.length;
+            const result: UtmAnalyticsItem[] = Object.entries(utmMap)
+                .map(([utm_source, count]) => ({
+                    utm_source,
+                    count,
+                    percentage: total > 0 ? (count / total) * 100 : 0,
+                }))
+                .sort((a, b) => b.count - a.count);
+
+            return result;
+        },
+        enabled: !!pipelineId,
+    });
+}
+
+// =========================
+// Lead Processing Time Analytics
+// =========================
+
+export interface LeadProcessingTimeStats {
+    fastest_minutes: number;
+    slowest_minutes: number;
+    average_minutes: number;
+    total_processed: number;
+}
+
+export interface EmployeeProcessingTime {
+    employee_id: string;
+    employee_name: string;
+    fastest_minutes: number;
+    slowest_minutes: number;
+    average_minutes: number;
+    total_leads: number;
+}
+
+export function useLeadProcessingTime(pipelineId?: string, dateRange?: DashboardDateRange, excludedStageIds?: string[]) {
+    const supabase = createClient();
+
+    return useQuery({
+        queryKey: ["lead-processing-time", pipelineId, dateRange?.startDate, dateRange?.endDate, excludedStageIds],
+        queryFn: async () => {
+            // Fetch leads with created_at, updated_at, and employee info
+            let query = supabase
+                .from("leads")
+                .select("created_at, updated_at, employee_id, stage_id, employee:xodimlar(id, name)")
+                .not("employee_id", "is", null);
+
+            if (pipelineId) {
+                query = query.eq("pipeline_id", pipelineId);
+            }
+
+            query = applyDateRange(query, dateRange);
+
+            const { data, error } = await query;
+            if (error) throw error;
+            if (!data?.length) return { overall: null, employees: [] };
+
+            // Ignore qilingan stage'lardagi lidlarni filter qilamiz
+            const filteredData = excludedStageIds && excludedStageIds.length > 0
+                ? data.filter((lead: any) => !excludedStageIds.includes(lead.stage_id))
+                : data;
+
+            if (!filteredData.length) return { overall: null, employees: [] };
+
+            // Calculate processing times (updated_at - created_at in minutes)
+            const processedLeads = filteredData
+                .filter((lead: any) => lead.created_at)
+                .map((lead: any) => {
+                    const created = new Date(lead.created_at).getTime();
+                    const updated = lead.updated_at ? new Date(lead.updated_at).getTime() : created;
+                    const diffMinutes = Math.max(0, (updated - created) / (1000 * 60));
+                    return {
+                        ...lead,
+                        processing_minutes: diffMinutes,
+                    };
+                });
+
+            if (processedLeads.length === 0) return { overall: null, employees: [] };
+
+            // Overall stats
+            const allTimes = processedLeads.map((l: any) => l.processing_minutes);
+            const overall: LeadProcessingTimeStats = {
+                fastest_minutes: Math.min(...allTimes),
+                slowest_minutes: Math.max(...allTimes),
+                average_minutes: allTimes.reduce((a: number, b: number) => a + b, 0) / allTimes.length,
+                total_processed: processedLeads.length,
+            };
+
+            // Per-employee stats
+            const employeeMap: Record<string, { name: string; times: number[] }> = {};
+            processedLeads.forEach((lead: any) => {
+                const empId = lead.employee_id;
+                const empName = lead.employee?.name || "Noma'lum";
+                if (!employeeMap[empId]) {
+                    employeeMap[empId] = { name: empName, times: [] };
+                }
+                employeeMap[empId].times.push(lead.processing_minutes);
+            });
+
+            const employees: EmployeeProcessingTime[] = Object.entries(employeeMap)
+                .map(([empId, data]) => ({
+                    employee_id: empId,
+                    employee_name: data.name,
+                    fastest_minutes: Math.min(...data.times),
+                    slowest_minutes: Math.max(...data.times),
+                    average_minutes: data.times.reduce((a, b) => a + b, 0) / data.times.length,
+                    total_leads: data.times.length,
+                }))
+                .sort((a, b) => a.average_minutes - b.average_minutes); // Fastest first
+
+            return { overall, employees };
+        },
+        enabled: !!pipelineId,
     });
 }

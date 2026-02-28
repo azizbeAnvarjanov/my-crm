@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useBranch } from "@/components/app-sidebar";
-import { usePipelines } from "@/hooks/use-pipeline";
+import { usePipelines, useStages } from "@/hooks/use-pipeline";
 import {
   useDashboardStats,
   useLeadsByStage,
   useEmployeeConversion,
   useLeadsTrend,
   useTopCallers,
+  useUtmAnalytics,
+  useLeadProcessingTime,
   DashboardDateRange,
 } from "@/hooks/use-dashboard-stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -49,9 +51,23 @@ import {
   Clock,
   Calendar,
   CalendarDays,
+  Globe,
+  Zap,
+  Timer,
+  ArrowUpDown,
+  Filter,
+  X,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 import { useTheme } from "@/lib/providers/theme-provider";
 
 const COLORS = [
@@ -62,7 +78,38 @@ const COLORS = [
   "#8b5cf6",
   "#ec4899",
   "#06b6d4",
+  "#f97316",
+  "#14b8a6",
+  "#84cc16",
 ];
+
+// UTM source colors mapping
+const UTM_COLORS: Record<string, string> = {
+  Instagram: "#E1306C",
+  Facebook: "#1877F2",
+  Telegram: "#26A5E4",
+  Google: "#4285F4",
+  Youtube: "#FF0000",
+  Tiktok: "#000000",
+  Website: "#10b981",
+  "Noma'lum": "#6b7280",
+};
+
+const getUtmColor = (source: string, index: number) => {
+  return UTM_COLORS[source] || COLORS[index % COLORS.length];
+};
+
+// Format time helper
+const formatTime = (minutes: number): string => {
+  if (minutes < 1) return "< 1 daq";
+  if (minutes < 60) return `${Math.round(minutes)} daq`;
+  const hours = Math.floor(minutes / 60);
+  const mins = Math.round(minutes % 60);
+  if (hours < 24) return mins > 0 ? `${hours} soat ${mins} daq` : `${hours} soat`;
+  const days = Math.floor(hours / 24);
+  const remainHours = hours % 24;
+  return remainHours > 0 ? `${days} kun ${remainHours} soat` : `${days} kun`;
+};
 
 export default function DashboardPage() {
   const { selectedBranch } = useBranch();
@@ -78,6 +125,7 @@ export default function DashboardPage() {
   // Pipeline state
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
   const [conversionStageId, setConversionStageId] = useState<string>("");
+  const [excludedStageIds, setExcludedStageIds] = useState<string[]>([]);
   const [trendPeriod, setTrendPeriod] = useState<
     "day" | "week" | "month" | "year"
   >("month");
@@ -138,12 +186,22 @@ export default function DashboardPage() {
     branchId ?? null,
   );
 
-  // Auto-select first pipeline when pipelines load
+  // Reset pipeline when branch changes
   useEffect(() => {
-    if (pipelines.length > 0 && !selectedPipelineId) {
-      setSelectedPipelineId(pipelines[0].id);
+    setSelectedPipelineId("");
+    setExcludedStageIds([]);
+  }, [branchId]);
+
+  // Auto-select first pipeline when pipelines load or branch changes
+  useEffect(() => {
+    if (pipelines.length > 0) {
+      const currentStillValid = pipelines.some(p => p.id === selectedPipelineId);
+      if (!currentStillValid) {
+        setSelectedPipelineId(pipelines[0].id);
+        setExcludedStageIds([]);
+      }
     }
-  }, [pipelines, selectedPipelineId]);
+  }, [pipelines]);
 
   // Fetch dashboard data
   const { data: stats, isLoading: statsLoading } =
@@ -151,7 +209,7 @@ export default function DashboardPage() {
   const { data: leadsByStage, isLoading: stagesLoading } =
     useLeadsByStage(selectedPipelineId);
   const { data: employeeConversion, isLoading: employeesLoading } =
-    useEmployeeConversion(branchId ?? null, conversionStageId);
+    useEmployeeConversion(conversionStageId);
   const { data: leadsTrend, isLoading: trendLoading } = useLeadsTrend(
     trendPeriod,
     selectedPipelineId,
@@ -160,6 +218,18 @@ export default function DashboardPage() {
     branchId ?? null,
     dateRange,
   );
+  const { data: utmData, isLoading: utmLoading } = useUtmAnalytics(
+    selectedPipelineId,
+    dateRange,
+  );
+  const { data: processingTime, isLoading: processingLoading } = useLeadProcessingTime(
+    selectedPipelineId,
+    dateRange,
+    excludedStageIds,
+  );
+
+  // Stages for the processing time filter
+  const { data: pipelineStages = [] } = useStages(selectedPipelineId || "");
 
   // Prepare Task Data for Donut Chart
   const taskData = [
@@ -323,6 +393,16 @@ export default function DashboardPage() {
                 </span>
               </div>
             </div>
+            {(stats?.unassigned_leads ?? 0) > 0 && (
+              <div className="mt-2.5 p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-between">
+                <span className="text-xs font-medium text-red-500">
+                  Biriktirilmagan
+                </span>
+                <span className="text-sm font-bold text-red-500">
+                  {stats?.unassigned_leads}
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -830,6 +910,337 @@ export default function DashboardPage() {
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   Vazifalar qo&apos;shilganda ko&apos;rinadi
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* UTM Analytics + Lead Processing Time - 2 columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-5">
+        {/* UTM Analytics (Pie Chart) */}
+        <Card className="border-border/60">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
+              <Globe className="h-5 w-5 text-pink-500" />
+              UTM Manbalari bo&apos;yicha Lidlar
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {utmLoading ? (
+              <div className="flex items-center justify-center h-72">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : utmData && utmData.length > 0 ? (
+              <div className="flex flex-col items-center">
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie
+                      data={utmData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={90}
+                      paddingAngle={3}
+                      dataKey="count"
+                      nameKey="utm_source"
+                      stroke="none"
+                    >
+                      {utmData.map((entry, index) => (
+                        <Cell
+                          key={`utm-${index}`}
+                          fill={getUtmColor(entry.utm_source, index)}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                        color: tooltipLabelColor,
+                      }}
+                      labelStyle={{ color: tooltipLabelColor }}
+                      formatter={((value: any, name: any) => [
+                        `${value ?? 0} ta lid`,
+                        name ?? "",
+                      ]) as any}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      height={36}
+                      iconType="circle"
+                      formatter={(value) => (
+                        <span className="text-xs font-medium text-foreground ml-1">
+                          {value}
+                        </span>
+                      )}
+                    />
+                    <text
+                      x="50%"
+                      y="45%"
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                    >
+                      <tspan
+                        x="50%"
+                        dy="-0.5em"
+                        fontSize="22"
+                        fontWeight="bold"
+                        fill="hsl(var(--foreground))"
+                      >
+                        {utmData.reduce((sum, item) => sum + item.count, 0)}
+                      </tspan>
+                      <tspan
+                        x="50%"
+                        dy="1.5em"
+                        fontSize="11"
+                        fill="hsl(var(--muted-foreground))"
+                      >
+                        Jami Lid
+                      </tspan>
+                    </text>
+                  </PieChart>
+                </ResponsiveContainer>
+
+                {/* UTM source breakdown list */}
+                <div className="w-full mt-3 space-y-2">
+                  {utmData.map((item, index) => (
+                    <div
+                      key={item.utm_source}
+                      className="flex items-center justify-between p-2.5 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className="h-3 w-3 rounded-full"
+                          style={{ backgroundColor: getUtmColor(item.utm_source, index) }}
+                        />
+                        <span className="text-sm font-medium text-foreground">
+                          {item.utm_source}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-bold text-foreground">
+                          {item.count}
+                        </span>
+                        <span className="text-xs text-muted-foreground min-w-[45px] text-right">
+                          {item.percentage.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <div className="p-3 rounded-full bg-muted mb-3">
+                  <Globe className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium text-foreground">
+                  UTM ma&apos;lumotlari topilmadi
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Lidlarda UTM manba bo&apos;lganda ko&apos;rinadi
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Lead Processing Time Analytics */}
+        <Card className="border-border/60">
+          <CardHeader className="pb-2">
+            <div className="flex flex-col gap-3">
+              <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
+                <Timer className="h-5 w-5 text-cyan-500" />
+                Lid Ishlash Vaqti Analitikasi
+              </CardTitle>
+
+              {/* Stage Exclude Filter */}
+              <div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs gap-1.5 w-full justify-start"
+                    >
+                      <Filter className="h-3.5 w-3.5" />
+                      Ignore qilinadigan etaplar
+                      {excludedStageIds.length > 0 && (
+                        <Badge variant="secondary" className="ml-auto h-5 px-1.5 text-[10px]">
+                          {excludedStageIds.length}
+                        </Badge>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-3" align="start">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground mb-2">
+                        Quyidagi etaplardagi lidlar hisobga olinmaydi:
+                      </p>
+                      {pipelineStages.length > 0 ? (
+                        <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                          {pipelineStages.map((stage) => (
+                            <label
+                              key={stage.id}
+                              className="flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
+                            >
+                              <Checkbox
+                                checked={excludedStageIds.includes(stage.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setExcludedStageIds(prev => [...prev, stage.id]);
+                                  } else {
+                                    setExcludedStageIds(prev => prev.filter(id => id !== stage.id));
+                                  }
+                                }}
+                              />
+                              <span className="text-sm text-foreground">{stage.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Etaplar topilmadi</p>
+                      )}
+
+                      {excludedStageIds.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full h-7 text-xs mt-2"
+                          onClick={() => setExcludedStageIds([])}
+                        >
+                          <X className="h-3 w-3 mr-1" />
+                          Barchasini tozalash
+                        </Button>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                {/* Show excluded stage names */}
+                {excludedStageIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {excludedStageIds.map(stageId => {
+                      const stage = pipelineStages.find(s => s.id === stageId);
+                      return stage ? (
+                        <Badge
+                          key={stageId}
+                          variant="destructive"
+                          className="text-[10px] px-1.5 py-0 h-5 gap-1 cursor-pointer"
+                          onClick={() => setExcludedStageIds(prev => prev.filter(id => id !== stageId))}
+                        >
+                          {stage.name}
+                          <X className="h-2.5 w-2.5" />
+                        </Badge>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {processingLoading ? (
+              <div className="flex items-center justify-center h-72">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : processingTime?.overall ? (
+              <div className="space-y-5">
+                {/* Overall Stats Cards */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/20 text-center">
+                    <Zap className="h-4 w-4 text-green-500 mx-auto mb-1" />
+                    <div className="text-xs text-muted-foreground mb-0.5">Eng tez</div>
+                    <div className="text-sm font-bold text-green-500">
+                      {formatTime(processingTime.overall.fastest_minutes)}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+                    <ArrowUpDown className="h-4 w-4 text-amber-500 mx-auto mb-1" />
+                    <div className="text-xs text-muted-foreground mb-0.5">O&apos;rtacha</div>
+                    <div className="text-sm font-bold text-amber-500">
+                      {formatTime(processingTime.overall.average_minutes)}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-center">
+                    <Clock className="h-4 w-4 text-red-500 mx-auto mb-1" />
+                    <div className="text-xs text-muted-foreground mb-0.5">Eng sekin</div>
+                    <div className="text-sm font-bold text-red-500">
+                      {formatTime(processingTime.overall.slowest_minutes)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-xs text-muted-foreground text-center">
+                  Jami {processingTime.overall.total_processed} ta lid tahlil qilindi
+                </div>
+
+                {/* Employee Processing Times */}
+                <div>
+                  <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <Users className="h-4 w-4 text-muted-foreground" />
+                    Xodimlar bo&apos;yicha
+                  </h4>
+                  <div className="space-y-2 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+                    {processingTime.employees.map((emp, index) => (
+                      <div
+                        key={emp.employee_id}
+                        className="p-3 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="text-xs font-medium text-muted-foreground shrink-0">
+                              #{index + 1}
+                            </span>
+                            <span
+                              className="text-sm font-semibold text-foreground truncate"
+                              title={emp.employee_name}
+                            >
+                              {emp.employee_name}
+                            </span>
+                          </div>
+                          <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                            {emp.total_leads} lid
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="px-2 py-1.5 rounded-md bg-green-500/5">
+                            <div className="text-[10px] text-muted-foreground">Tez</div>
+                            <div className="text-xs font-bold text-green-500">
+                              {formatTime(emp.fastest_minutes)}
+                            </div>
+                          </div>
+                          <div className="px-2 py-1.5 rounded-md bg-amber-500/5">
+                            <div className="text-[10px] text-muted-foreground">O&apos;rtacha</div>
+                            <div className="text-xs font-bold text-amber-500">
+                              {formatTime(emp.average_minutes)}
+                            </div>
+                          </div>
+                          <div className="px-2 py-1.5 rounded-md bg-red-500/5">
+                            <div className="text-[10px] text-muted-foreground">Sekin</div>
+                            <div className="text-xs font-bold text-red-500">
+                              {formatTime(emp.slowest_minutes)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <div className="p-3 rounded-full bg-muted mb-3">
+                  <Timer className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium text-foreground">
+                  Ishlangan lidlar topilmadi
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Lidlar yangilanganda bu yerda ko&apos;rinadi
                 </p>
               </div>
             )}

@@ -107,40 +107,34 @@ export function useDashboardStats(pipelineId?: string) {
                 updatedMonthQuery = updatedMonthQuery.eq("pipeline_id", pipelineId);
             }
 
-            // Tasks statistikasi (boolean status va date bo'yicha)
-            const { data: allTasks } = await supabase.from("tasks").select("status, date");
+            // Tasks statistikasi (count bilan — row kelmaydi, 1000 limit muammosi yo'q)
+            const { count: total_tasks } = await supabase
+                .from("tasks").select("*", { count: "exact", head: true });
 
-            let total_tasks = 0;
-            let completed_tasks = 0;
-            let pending_tasks = 0;
-            let overdue_tasks = 0;
-            let today_tasks = 0;
-            let upcoming_tasks = 0;
+            const { count: completed_tasks } = await supabase
+                .from("tasks").select("*", { count: "exact", head: true })
+                .eq("status", true);
 
-            (allTasks || []).forEach((task) => {
-                total_tasks++;
+            const { count: pending_tasks } = await supabase
+                .from("tasks").select("*", { count: "exact", head: true })
+                .eq("status", false);
 
-                // Status bo'yicha (boolean)
-                if (task.status === true) {
-                    completed_tasks++;
-                } else {
-                    pending_tasks++;
-                }
+            // Muddati o'tgan: date < today va status = false
+            const { count: overdue_tasks } = await supabase
+                .from("tasks").select("*", { count: "exact", head: true })
+                .eq("status", false)
+                .lt("date", today.toISOString().split("T")[0]);
 
-                // Date bo'yicha
-                if (task.date) {
-                    const taskDate = new Date(task.date);
-                    taskDate.setHours(0, 0, 0, 0);
+            // Bugungi: date = today
+            const { count: today_tasks } = await supabase
+                .from("tasks").select("*", { count: "exact", head: true })
+                .eq("date", today.toISOString().split("T")[0]);
 
-                    if (taskDate < today) {
-                        overdue_tasks++;
-                    } else if (taskDate.getTime() === today.getTime()) {
-                        today_tasks++;
-                    } else if (taskDate <= threeDaysLater) {
-                        upcoming_tasks++;
-                    }
-                }
-            });
+            // Yaqinlashayotgan: date > today va date <= today + 3 kun
+            const { count: upcoming_tasks } = await supabase
+                .from("tasks").select("*", { count: "exact", head: true })
+                .gt("date", today.toISOString().split("T")[0])
+                .lte("date", threeDaysLater.toISOString().split("T")[0]);
 
             // Qo'ng'iroqlar
             const { count: total_calls } = await supabase
@@ -186,12 +180,12 @@ export function useDashboardStats(pipelineId?: string) {
                 updated_today: updated_today || 0,
                 updated_week: updated_week || 0,
                 updated_month: updated_month || 0,
-                total_tasks,
-                completed_tasks,
-                pending_tasks,
-                overdue_tasks,
-                today_tasks,
-                upcoming_tasks,
+                total_tasks: total_tasks || 0,
+                completed_tasks: completed_tasks || 0,
+                pending_tasks: pending_tasks || 0,
+                overdue_tasks: overdue_tasks || 0,
+                today_tasks: today_tasks || 0,
+                upcoming_tasks: upcoming_tasks || 0,
                 total_calls: total_calls || 0,
                 calls_today: calls_today || 0,
                 calls_week: calls_week || 0,
@@ -207,30 +201,35 @@ export function useLeadsByStage(pipelineId?: string) {
     return useQuery({
         queryKey: dashboardKeys.leadsByStage(pipelineId),
         queryFn: async () => {
-            let query = supabase.from("leads").select("stage_id, stages(name)");
+            // 1. Avval pipelinedagi stage'larni olamiz
+            let stagesQuery = supabase.from("stages").select("id, name");
+            if (pipelineId) stagesQuery = stagesQuery.eq("pipeline_id", pipelineId);
 
-            if (pipelineId) query = query.eq("pipeline_id", pipelineId);
+            const { data: stages, error: stagesError } = await stagesQuery;
+            if (stagesError) throw stagesError;
+            if (!stages?.length) return [];
 
-            const { data, error } = await query;
-            if (error) throw error;
+            // 2. Har bir stage uchun count olamiz (row emas!)
+            const results = await Promise.all(
+                stages.map(async (stage) => {
+                    let countQuery = supabase
+                        .from("leads")
+                        .select("*", { count: "exact", head: true })
+                        .eq("stage_id", stage.id);
+                    if (pipelineId) countQuery = countQuery.eq("pipeline_id", pipelineId);
 
-            const total = data?.length || 0;
-            const grouped = (data || []).reduce((acc: any, lead: any) => {
-                const stageId = lead.stage_id;
-                const stageName = lead.stages?.name || "Unknown";
-
-                if (!acc[stageId]) {
-                    acc[stageId] = {
-                        stage_id: stageId,
-                        stage_name: stageName,
-                        count: 0,
+                    const { count } = await countQuery;
+                    return {
+                        stage_id: stage.id,
+                        stage_name: stage.name,
+                        count: count || 0,
                     };
-                }
-                acc[stageId].count++;
-                return acc;
-            }, {});
+                })
+            );
 
-            return Object.values(grouped).map((item: any) => ({
+            const total = results.reduce((sum, r) => sum + r.count, 0);
+
+            return results.map(item => ({
                 ...item,
                 percentage: total > 0 ? (item.count / total) * 100 : 0,
             })) as LeadsByStage[];
@@ -256,45 +255,40 @@ export function useEmployeeConversion(branchId: string | null, conversionStageId
             if (empError) throw empError;
             if (!employees?.length) return [];
 
-            const employeeIds = employees.map(e => e.id);
-            const employeeMap = new Map(employees.map(e => [e.id, e.name]));
+            // 2. Har bir xodim uchun total_leads va converted_leads count olamiz (row emas!)
+            const results = await Promise.all(
+                employees.map(async (emp) => {
+                    // Jami lidlar
+                    const { count: total_leads } = await supabase
+                        .from("leads")
+                        .select("*", { count: "exact", head: true })
+                        .eq("employee_id", emp.id);
 
-            // 2. Shu xodimlarga tegishli lidlarni olamiz
-            const { data: leads, error: leadsError } = await supabase
-                .from("leads")
-                .select("employee_id, stage_id")
-                .in("employee_id", employeeIds);
-
-            if (leadsError) throw leadsError;
-
-            // 3. Statistikani hisoblaymiz
-            const stats = employeeIds.map(id => ({
-                employee_id: id,
-                employee_name: employeeMap.get(id) || "Unknown",
-                total_leads: 0,
-                converted_leads: 0,
-                conversion_rate: 0
-            }));
-
-            const statsMap = new Map(stats.map(s => [s.employee_id, s]));
-
-            (leads || []).forEach(lead => {
-                const stat = statsMap.get(lead.employee_id);
-                if (stat) {
-                    stat.total_leads++;
-                    if (conversionStageId && lead.stage_id === conversionStageId) {
-                        stat.converted_leads++;
+                    // Konversiya qilingan lidlar
+                    let converted_leads = 0;
+                    if (conversionStageId) {
+                        const { count } = await supabase
+                            .from("leads")
+                            .select("*", { count: "exact", head: true })
+                            .eq("employee_id", emp.id)
+                            .eq("stage_id", conversionStageId);
+                        converted_leads = count || 0;
                     }
-                }
-            });
 
-            // Foizlarni hisoblash va saralash
-            return stats.map(stat => ({
-                ...stat,
-                conversion_rate: stat.total_leads > 0
-                    ? (stat.converted_leads / stat.total_leads) * 100
-                    : 0
-            })).sort((a, b) => b.total_leads - a.total_leads);
+                    const totalCount = total_leads || 0;
+                    return {
+                        employee_id: emp.id,
+                        employee_name: emp.name,
+                        total_leads: totalCount,
+                        converted_leads,
+                        conversion_rate: totalCount > 0
+                            ? (converted_leads / totalCount) * 100
+                            : 0,
+                    };
+                })
+            );
+
+            return results.sort((a, b) => b.total_leads - a.total_leads);
         },
         enabled: !!branchId,
     });
@@ -319,40 +313,32 @@ export function useTopCallers(branchId: string | null) {
             // xodimlar jadvalida employee_id (auth id) bor deb faraz qilamiz (use-employee.ts asosida)
             const { data: employees, error: empError } = await supabase
                 .from("xodimlar")
-                .select("id, name, employee_id")
+                .select("id, name, employee_id, user_id")
                 .eq("branch_id", branchId)
                 .not("employee_id", "is", null);
 
             if (empError) throw empError;
             if (!employees?.length) return [];
 
-            // user_id -> name map
-            const userMap = new Map(employees.map(e => [e.employee_id, e.name]));
-            const userIds = employees.map(e => e.employee_id);
+            // 2. Har bir xodim uchun qo'ng'iroqlar sonini olamiz (row emas, faqat count — 1000 limit muammosi yo'q)
+            const results: TopCaller[] = await Promise.all(
+                employees.map(async (e) => {
+                    const { count } = await supabase
+                        .from("calls")
+                        .select("*", { count: "exact", head: true })
+                        .eq("user_id", e.user_id);
 
-            // 2. Calls jadvalidan shu userlarning qo'ng'iroqlarini olamiz
-            const { data: calls, error: callsError } = await supabase
-                .from("calls")
-                .select("user_id") // user_id bo'yicha guruhlaymiz
-                .in("user_id", userIds);
+                    return {
+                        employee_id: e.user_id,
+                        employee_name: e.name,
+                        call_count: count || 0,
+                    };
+                })
+            );
 
-            if (callsError) throw callsError;
-
-            // 3. Guruhlash
-            const counts: { [key: string]: number } = {};
-            (calls || []).forEach(call => {
-                if (call.user_id) {
-                    counts[call.user_id] = (counts[call.user_id] || 0) + 1;
-                }
-            });
-
-            // 4. Formatlash
-            return Object.entries(counts)
-                .map(([userId, count]) => ({
-                    employee_id: userId,
-                    employee_name: userMap.get(userId) || "Unknown",
-                    call_count: count
-                }))
+            // 3. Formatlash — faqat qo'ng'iroq qilganlarni ko'rsatamiz
+            return results
+                .filter(r => r.call_count > 0)
                 .sort((a, b) => b.call_count - a.call_count)
                 .slice(0, 5); // Top 5
         },
@@ -382,37 +368,45 @@ export function useLeadsTrend(period: "day" | "week" | "month" | "year", pipelin
                 format = { month: "short" };
             }
 
-            const startDate = new Date(now);
-            startDate.setDate(startDate.getDate() - days);
-
-            let query = supabase
-                .from("leads")
-                .select("created_at")
-                .gte("created_at", startDate.toISOString());
-
-            if (pipelineId) query = query.eq("pipeline_id", pipelineId);
-
-            const { data, error } = await query;
-            if (error) throw error;
-
-            const grouped: { [key: string]: number } = {};
-
-            (data || []).forEach((lead) => {
-                const date = new Date(lead.created_at);
-                const dateKey = date.toISOString().split("T")[0];
-                grouped[dateKey] = (grouped[dateKey] || 0) + 1;
-            });
-
+            // Har bir kun uchun count olamiz (row emas!)
             const result: LeadsTrend[] = [];
+
+            // Parallel so'rovlar — har bir kun uchun count
+            const queries = [];
             for (let i = 0; i < days; i++) {
                 const date = new Date(now);
                 date.setDate(date.getDate() - (days - 1 - i));
                 const dateKey = date.toISOString().split("T")[0];
+                const dayStart = `${dateKey}T00:00:00.000Z`;
+                const dayEnd = `${dateKey}T23:59:59.999Z`;
 
-                result.push({
+                queries.push({
                     date: dateKey,
-                    count: grouped[dateKey] || 0,
                     label: date.toLocaleDateString("ru-RU", format),
+                    queryFn: async () => {
+                        let q = supabase
+                            .from("leads")
+                            .select("*", { count: "exact", head: true })
+                            .gte("created_at", dayStart)
+                            .lte("created_at", dayEnd);
+                        if (pipelineId) q = q.eq("pipeline_id", pipelineId);
+                        const { count } = await q;
+                        return count || 0;
+                    }
+                });
+            }
+
+            // Parallel bajaramiz (lekin juda ko'p bo'lmasligi uchun batch qilamiz)
+            const batchSize = 30;
+            for (let i = 0; i < queries.length; i += batchSize) {
+                const batch = queries.slice(i, i + batchSize);
+                const counts = await Promise.all(batch.map(q => q.queryFn()));
+                batch.forEach((q, idx) => {
+                    result.push({
+                        date: q.date,
+                        count: counts[idx],
+                        label: q.label,
+                    });
                 });
             }
 

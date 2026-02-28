@@ -88,35 +88,95 @@ export function useCallsEmployees(branchId: string | null) {
     });
 }
 
-// Calculate stats from calls
-function calculateStats(calls: Call[]): CallStats {
-    const answeredCalls = calls.filter((c) => c.answered === "1");
-    const unansweredCalls = calls.filter((c) => c.answered === "0");
-    const incoming = calls.filter((c) => c.direction === 0);
-    const outgoing = calls.filter((c) => c.direction === 1);
-    const incomingAnswered = incoming.filter((c) => c.answered === "1");
-    const outgoingAnswered = outgoing.filter((c) => c.answered === "1");
+// Count-based stats helper — har bir xodim uchun faqat count va duration olinadi, row emas!
+// Bu Supabase 1000 row limitini chetlab o'tadi
+async function fetchCountStats(
+    supabase: ReturnType<typeof createClient>,
+    baseFilters: { startDate?: string; endDate?: string; endDateIso?: string },
+    userId: string
+): Promise<CallStats> {
+    const applyDateFilter = (q: any) => {
+        if (baseFilters.startDate) q = q.gte("created_at", baseFilters.startDate);
+        if (baseFilters.endDateIso) q = q.lt("created_at", baseFilters.endDateIso);
+        return q;
+    };
 
-    const totalDuration = answeredCalls.reduce((sum, c) => sum + (c.duration || 0), 0);
-    const incomingDuration = incomingAnswered.reduce((sum, c) => sum + (c.duration || 0), 0);
-    const outgoingDuration = outgoingAnswered.reduce((sum, c) => sum + (c.duration || 0), 0);
+    // Barcha countlarni parallel olamiz
+    const [totalRes, answeredRes, unansweredRes, inTotalRes, inAnsweredRes, outTotalRes, outAnsweredRes] =
+        await Promise.all([
+            // Jami
+            applyDateFilter(supabase.from("calls").select("*", { count: "exact", head: true }).eq("user_id", userId)),
+            // Javob berilgan
+            applyDateFilter(supabase.from("calls").select("*", { count: "exact", head: true }).eq("user_id", userId).eq("answered", "1")),
+            // Javob berilmagan
+            applyDateFilter(supabase.from("calls").select("*", { count: "exact", head: true }).eq("user_id", userId).eq("answered", "0")),
+            // Kiruvchi jami
+            applyDateFilter(supabase.from("calls").select("*", { count: "exact", head: true }).eq("user_id", userId).eq("direction", 0)),
+            // Kiruvchi javob berilgan
+            applyDateFilter(supabase.from("calls").select("*", { count: "exact", head: true }).eq("user_id", userId).eq("direction", 0).eq("answered", "1")),
+            // Chiquvchi jami
+            applyDateFilter(supabase.from("calls").select("*", { count: "exact", head: true }).eq("user_id", userId).eq("direction", 1)),
+            // Chiquvchi javob berilgan
+            applyDateFilter(supabase.from("calls").select("*", { count: "exact", head: true }).eq("user_id", userId).eq("direction", 1).eq("answered", "1")),
+        ]);
+
+    const totalCalls = totalRes.count || 0;
+    const answeredCalls = answeredRes.count || 0;
+    const unansweredCalls = unansweredRes.count || 0;
+    const inTotal = inTotalRes.count || 0;
+    const inAnswered = inAnsweredRes.count || 0;
+    const outTotal = outTotalRes.count || 0;
+    const outAnswered = outAnsweredRes.count || 0;
+
+    // Duration uchun faqat answered calllarning duration ustunini olamiz
+    // (row kam — faqat javob berilganlar, va faqat duration ustuni)
+    let totalDuration = 0;
+    let incomingDuration = 0;
+    let outgoingDuration = 0;
+
+    if (answeredCalls > 0) {
+        // Umumiy duration
+        let durQuery = applyDateFilter(
+            supabase.from("calls").select("duration").eq("user_id", userId).eq("answered", "1")
+        );
+        const { data: durData } = await durQuery;
+        totalDuration = (durData || []).reduce((sum: number, c: { duration: number }) => sum + (c.duration || 0), 0);
+
+        // Kiruvchi duration
+        if (inAnswered > 0) {
+            let inDurQuery = applyDateFilter(
+                supabase.from("calls").select("duration").eq("user_id", userId).eq("answered", "1").eq("direction", 0)
+            );
+            const { data: inDurData } = await inDurQuery;
+            incomingDuration = (inDurData || []).reduce((sum: number, c: { duration: number }) => sum + (c.duration || 0), 0);
+        }
+
+        // Chiquvchi duration
+        if (outAnswered > 0) {
+            let outDurQuery = applyDateFilter(
+                supabase.from("calls").select("duration").eq("user_id", userId).eq("answered", "1").eq("direction", 1)
+            );
+            const { data: outDurData } = await outDurQuery;
+            outgoingDuration = (outDurData || []).reduce((sum: number, c: { duration: number }) => sum + (c.duration || 0), 0);
+        }
+    }
 
     return {
-        totalCalls: calls.length,
-        answeredCalls: answeredCalls.length,
-        unansweredCalls: unansweredCalls.length,
+        totalCalls,
+        answeredCalls,
+        unansweredCalls,
         totalDuration,
-        avgDuration: answeredCalls.length > 0 ? Math.round(totalDuration / answeredCalls.length) : 0,
+        avgDuration: answeredCalls > 0 ? Math.round(totalDuration / answeredCalls) : 0,
         incoming: {
-            total: incoming.length,
-            answered: incomingAnswered.length,
-            unanswered: incoming.length - incomingAnswered.length,
+            total: inTotal,
+            answered: inAnswered,
+            unanswered: inTotal - inAnswered,
             totalDuration: incomingDuration,
         },
         outgoing: {
-            total: outgoing.length,
-            answered: outgoingAnswered.length,
-            unanswered: outgoing.length - outgoingAnswered.length,
+            total: outTotal,
+            answered: outAnswered,
+            unanswered: outTotal - outAnswered,
             totalDuration: outgoingDuration,
         },
     };
@@ -128,84 +188,110 @@ export function useCallsStats(filter: CallsFilter, employees: Employee[] = []) {
         queryKey: [...callsKeys.stats(filter), employees.length],
         queryFn: async () => {
             const supabase = createClient();
-            let query = supabase.from("calls").select("*");
 
-            if (filter.startDate) {
-                query = query.gte("created_at", filter.startDate);
-            }
+            let endDateIso: string | undefined;
             if (filter.endDate) {
-                // Add one day to include the end date fully
                 const endDate = new Date(filter.endDate);
                 endDate.setDate(endDate.getDate() + 1);
-                query = query.lt("created_at", endDate.toISOString());
+                endDateIso = endDate.toISOString();
             }
+
+            const baseFilters = { startDate: filter.startDate, endDate: filter.endDate, endDateIso };
 
             if (filter.employeeId) {
-                // Filter by specific employee using their user_id
                 const selectedEmp = employees.find(e => e.id === filter.employeeId);
-                if (selectedEmp?.user_id) {
-                    query = query.eq("user_id", selectedEmp.user_id);
-                } else {
-                    query = query.eq("user_id", filter.employeeId);
-                }
-            } else if (employees.length > 0) {
-                // Filter by all employees in the branch using their user_ids
-                const allUserIds = employees
-                    .map(e => e.user_id)
-                    .filter(Boolean) as string[];
-                if (allUserIds.length > 0) {
-                    query = query.in("user_id", allUserIds);
-                }
+                const userId = selectedEmp?.user_id || filter.employeeId;
+                return fetchCountStats(supabase, baseFilters, userId);
             }
 
-            const { data, error } = await query;
-            if (error) throw error;
+            // Barcha xodimlar uchun count olamiz va yig'amiz
+            const userIds = employees.map(e => e.user_id).filter(Boolean) as string[];
+            if (userIds.length === 0) {
+                return {
+                    totalCalls: 0, answeredCalls: 0, unansweredCalls: 0,
+                    totalDuration: 0, avgDuration: 0,
+                    incoming: { total: 0, answered: 0, unanswered: 0, totalDuration: 0 },
+                    outgoing: { total: 0, answered: 0, unanswered: 0, totalDuration: 0 },
+                } as CallStats;
+            }
 
-            return calculateStats(data as Call[]);
+            const allStats = await Promise.all(
+                userIds.map(uid => fetchCountStats(supabase, baseFilters, uid))
+            );
+
+            // Yig'amiz
+            const combined: CallStats = {
+                totalCalls: 0, answeredCalls: 0, unansweredCalls: 0,
+                totalDuration: 0, avgDuration: 0,
+                incoming: { total: 0, answered: 0, unanswered: 0, totalDuration: 0 },
+                outgoing: { total: 0, answered: 0, unanswered: 0, totalDuration: 0 },
+            };
+
+            allStats.forEach(s => {
+                combined.totalCalls += s.totalCalls;
+                combined.answeredCalls += s.answeredCalls;
+                combined.unansweredCalls += s.unansweredCalls;
+                combined.totalDuration += s.totalDuration;
+                combined.incoming.total += s.incoming.total;
+                combined.incoming.answered += s.incoming.answered;
+                combined.incoming.unanswered += s.incoming.unanswered;
+                combined.incoming.totalDuration += s.incoming.totalDuration;
+                combined.outgoing.total += s.outgoing.total;
+                combined.outgoing.answered += s.outgoing.answered;
+                combined.outgoing.unanswered += s.outgoing.unanswered;
+                combined.outgoing.totalDuration += s.outgoing.totalDuration;
+            });
+
+            combined.avgDuration = combined.answeredCalls > 0
+                ? Math.round(combined.totalDuration / combined.answeredCalls)
+                : 0;
+
+            return combined;
         },
         enabled: employees.length > 0,
     });
 }
 
-// Get stats by each employee
+// Get stats by each employee — count bilan, row emas!
 export function useCallsStatsByEmployee(filter: CallsFilter, employees: Employee[]) {
     return useQuery({
         queryKey: [...callsKeys.byEmployee(filter), employees.map(e => e.user_id).join(",")],
         queryFn: async () => {
             const supabase = createClient();
-            let query = supabase.from("calls").select("*");
 
-            if (filter.startDate) {
-                query = query.gte("created_at", filter.startDate);
-            }
+            let endDateIso: string | undefined;
             if (filter.endDate) {
                 const endDate = new Date(filter.endDate);
                 endDate.setDate(endDate.getDate() + 1);
-                query = query.lt("created_at", endDate.toISOString());
+                endDateIso = endDate.toISOString();
             }
 
-            // Get calls for all managers using their user_ids
-            const userIds = employees.map(e => e.user_id).filter(Boolean) as string[];
-            if (userIds.length > 0) {
-                query = query.in("user_id", userIds);
-            }
+            const baseFilters = { startDate: filter.startDate, endDate: filter.endDate, endDateIso };
 
-            const { data, error } = await query;
-            if (error) throw error;
+            // Har bir xodim uchun parallel count olamiz
+            const statsByEmployee: EmployeeCallStats[] = await Promise.all(
+                employees.map(async (emp) => {
+                    if (!emp.user_id) {
+                        return {
+                            totalCalls: 0, answeredCalls: 0, unansweredCalls: 0,
+                            totalDuration: 0, avgDuration: 0,
+                            incoming: { total: 0, answered: 0, unanswered: 0, totalDuration: 0 },
+                            outgoing: { total: 0, answered: 0, unanswered: 0, totalDuration: 0 },
+                            employeeId: emp.id,
+                            employeeName: emp.name,
+                            userId: "",
+                        };
+                    }
 
-            const calls = data as Call[];
-
-            // Group by employee using user_id
-            const statsByEmployee: EmployeeCallStats[] = employees.map((emp) => {
-                const empCalls = calls.filter((c) => c.user_id === emp.user_id);
-                const stats = calculateStats(empCalls);
-                return {
-                    ...stats,
-                    employeeId: emp.id,
-                    employeeName: emp.name,
-                    userId: emp.user_id || "",
-                };
-            });
+                    const stats = await fetchCountStats(supabase, baseFilters, emp.user_id);
+                    return {
+                        ...stats,
+                        employeeId: emp.id,
+                        employeeName: emp.name,
+                        userId: emp.user_id,
+                    };
+                })
+            );
 
             // Sort by total calls descending
             return statsByEmployee.sort((a, b) => b.totalCalls - a.totalCalls);

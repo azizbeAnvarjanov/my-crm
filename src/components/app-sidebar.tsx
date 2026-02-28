@@ -9,15 +9,12 @@ import {
     User,
     GitBranch,
     StickyNote,
-    Phone,
     Settings,
     Users,
     FileText,
     UserPlus,
-    Upload,
     BarChart3,
     PhoneCall,
-    Headphones,
     ChevronLeft,
     ChevronRight,
     LogOut,
@@ -96,20 +93,17 @@ interface AuthUser {
 const navItems: NavItem[] = [
     // Asosiy
     { title: "Asosiy sahifa", href: "/", icon: LayoutDashboard, category: "asosiy" },
-    { title: "Mening profilim", href: "/profile", icon: User, category: "asosiy" },
 
     // CRM
     { title: "Pipelines", href: "/pipelines", icon: GitBranch, category: "crm" },
-    { title: "Mening eslatmalarim", href: "/notes", icon: StickyNote, category: "crm" },
-    { title: "Yangi kelib tushgan lidlar", href: "/leads", icon: UserPlus, category: "crm" },
-    { title: "Biriktirilmagan lidlar", href: "/not-assigned-leads", icon: Users, category: "crm" },
+    { title: "Eslatmalar", href: "/notes", icon: StickyNote, category: "crm" },
+    { title: "Yangi lidlar", href: "/leads", icon: UserPlus, category: "crm" },
+    { title: "Biriktirilmagan", href: "/not-assigned-leads", icon: Users, category: "crm" },
     { title: "Formalar", href: "/forms", icon: FileText, category: "crm" },
-    { title: "Import", href: "/import", icon: Upload, category: "crm" },
 
     // Analitika
     { title: "Dashboard", href: "/dashboard", icon: BarChart3, category: "analitika" },
-    { title: "Qo'ng'iroqlar analitikasi", href: "/calls", icon: PhoneCall, category: "analitika" },
-    { title: "Qo'ng'iroq yozuvlari", href: "/calls/recordings", icon: Headphones, category: "analitika" },
+    { title: "Qo'ng'iroqlar", href: "/calls", icon: PhoneCall, category: "analitika" },
 
     // Sozlamalar
     { title: "Xodimlar", href: "/employees", icon: Users, category: "sozlamalar" },
@@ -203,12 +197,12 @@ function NavItemComponent({
                                 }
                             `}
                         >
-                            <Link href={item.href} className="flex items-center gap-3">
+                            <Link href={item.href} className="flex items-center gap-3 min-w-0">
                                 <Icon
                                     className={`h-4 w-4 shrink-0 transition-colors duration-200 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
                                         }`}
                                 />
-                                <span className="text-sm font-medium">{item.title}</span>
+                                <span className="text-sm font-medium truncate">{item.title}</span>
                                 {isActive && (
                                     <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary" />
                                 )}
@@ -382,7 +376,7 @@ function AppSidebarContent({
                                             )}
                                         </div>
                                         {isExpanded && (
-                                            <span className="text-sm font-medium text-sidebar-foreground truncate">
+                                            <span className="text-sm font-medium text-sidebar-foreground truncate max-w-[140px] block">
                                                 {loading ? "Yuklanmoqda..." : selectedBranch?.name || "Filial tanlang"}
                                             </span>
                                         )}
@@ -453,7 +447,7 @@ function AppSidebarContent({
                                     )}
                                 </div>
                                 {isExpanded && (
-                                    <span className="text-sm font-medium text-sidebar-foreground truncate">
+                                    <span className="text-sm font-medium text-sidebar-foreground truncate max-w-[140px] block">
                                         {employeeLoading
                                             ? "Yuklanmoqda..."
                                             : employee?.branch?.name || "Filial yo'q"}
@@ -517,11 +511,11 @@ function AppSidebarContent({
                                     </AvatarFallback>
                                 </Avatar>
                                 {isExpanded && (
-                                    <div className="flex flex-col items-start overflow-hidden">
-                                        <span className="truncate text-sm font-medium text-sidebar-foreground">
+                                    <div className="flex flex-col items-start min-w-0 flex-1">
+                                        <span className="truncate text-sm font-medium text-sidebar-foreground w-full">
                                             {employee?.name || user?.user_metadata?.full_name || "Foydalanuvchi"}
                                         </span>
-                                        <span className="truncate text-xs text-muted-foreground">
+                                        <span className="truncate text-xs text-muted-foreground w-full">
                                             {employee?.role === "super-admin" ? "Super Admin" : "Manager"}
                                         </span>
                                     </div>

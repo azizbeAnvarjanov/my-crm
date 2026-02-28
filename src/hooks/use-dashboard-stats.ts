@@ -52,9 +52,15 @@ export interface LeadsTrend {
     label: string;
 }
 
+// Sana filtri turi
+export interface DashboardDateRange {
+    startDate: string; // ISO string yoki YYYY-MM-DD
+    endDate: string;   // ISO string yoki YYYY-MM-DD
+}
+
 const dashboardKeys = {
     all: ["dashboard-stats"] as const,
-    stats: (pipelineId?: string) => [...dashboardKeys.all, "stats", pipelineId] as const,
+    stats: (pipelineId?: string, dateRange?: DashboardDateRange) => [...dashboardKeys.all, "stats", pipelineId, dateRange?.startDate, dateRange?.endDate] as const,
     leadsByStage: (pipelineId?: string) =>
         [...dashboardKeys.all, "leads-by-stage", pipelineId] as const,
     employeeConversion: (pipelineId?: string) =>
@@ -63,12 +69,20 @@ const dashboardKeys = {
         [...dashboardKeys.all, "leads-trend", period, pipelineId] as const,
 };
 
-// Asosiy dashboard statistikasi (pipeline bo'yicha)
-export function useDashboardStats(pipelineId?: string) {
+// Sana filtri qo'llash helper
+function applyDateRange(query: any, dateRange?: DashboardDateRange, dateField = "created_at") {
+    if (!dateRange) return query;
+    query = query.gte(dateField, `${dateRange.startDate}T00:00:00.000Z`);
+    query = query.lte(dateField, `${dateRange.endDate}T23:59:59.999Z`);
+    return query;
+}
+
+// Asosiy dashboard statistikasi (pipeline + sana filtri bo'yicha)
+export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDateRange) {
     const supabase = createClient();
 
     return useQuery({
-        queryKey: dashboardKeys.stats(pipelineId),
+        queryKey: dashboardKeys.stats(pipelineId, dateRange),
         queryFn: async () => {
             const now = new Date();
             const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -83,17 +97,25 @@ export function useDashboardStats(pipelineId?: string) {
             const threeDaysLater = new Date(today);
             threeDaysLater.setDate(threeDaysLater.getDate() + 3);
 
-            // Leads statistikasi (pipeline bo'yicha filter)
-            let totalLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true });
+            // Leads statistikasi (pipeline + dateRange bo'yicha filter)
+            let totalLeadsQuery = applyDateRange(supabase.from("leads").select("*", { count: "exact", head: true }), dateRange);
             let todayLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("created_at", today.toISOString());
             let weekLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("created_at", weekAgo.toISOString());
             let monthLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("created_at", monthAgo.toISOString());
             let yearLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("created_at", yearAgo.toISOString());
 
+            // Agar dateRange bo'lsa, sub-period so'rovlarni ham dateRange ichida filter qilamiz
+            if (dateRange) {
+                todayLeadsQuery = applyDateRange(todayLeadsQuery, dateRange);
+                weekLeadsQuery = applyDateRange(weekLeadsQuery, dateRange);
+                monthLeadsQuery = applyDateRange(monthLeadsQuery, dateRange);
+                yearLeadsQuery = applyDateRange(yearLeadsQuery, dateRange);
+            }
+
             // Updated_at bo'yicha (pipeline bo'yicha)
-            let updatedTodayQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("updated_at", today.toISOString());
-            let updatedWeekQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("updated_at", weekAgo.toISOString());
-            let updatedMonthQuery = supabase.from("leads").select("*", { count: "exact", head: true }).gte("updated_at", monthAgo.toISOString());
+            let updatedTodayQuery = applyDateRange(supabase.from("leads").select("*", { count: "exact", head: true }).gte("updated_at", today.toISOString()), dateRange);
+            let updatedWeekQuery = applyDateRange(supabase.from("leads").select("*", { count: "exact", head: true }).gte("updated_at", weekAgo.toISOString()), dateRange);
+            let updatedMonthQuery = applyDateRange(supabase.from("leads").select("*", { count: "exact", head: true }).gte("updated_at", monthAgo.toISOString()), dateRange);
 
             // Pipeline filter qo'shamiz
             if (pipelineId) {
@@ -107,49 +129,44 @@ export function useDashboardStats(pipelineId?: string) {
                 updatedMonthQuery = updatedMonthQuery.eq("pipeline_id", pipelineId);
             }
 
-            // Tasks statistikasi (count bilan — row kelmaydi, 1000 limit muammosi yo'q)
-            const { count: total_tasks } = await supabase
-                .from("tasks").select("*", { count: "exact", head: true });
+            // Tasks statistikasi (count bilan — dateRange bilan filtrlanadi)
+            let totalTasksQ = supabase.from("tasks").select("*", { count: "exact", head: true });
+            let completedTasksQ = supabase.from("tasks").select("*", { count: "exact", head: true }).eq("status", true);
+            let pendingTasksQ = supabase.from("tasks").select("*", { count: "exact", head: true }).eq("status", false);
+            let overdueTasksQ = supabase.from("tasks").select("*", { count: "exact", head: true }).eq("status", false).lt("date", today.toISOString().split("T")[0]);
+            let todayTasksQ = supabase.from("tasks").select("*", { count: "exact", head: true }).eq("date", today.toISOString().split("T")[0]);
+            let upcomingTasksQ = supabase.from("tasks").select("*", { count: "exact", head: true }).gt("date", today.toISOString().split("T")[0]).lte("date", threeDaysLater.toISOString().split("T")[0]);
 
-            const { count: completed_tasks } = await supabase
-                .from("tasks").select("*", { count: "exact", head: true })
-                .eq("status", true);
+            if (dateRange) {
+                totalTasksQ = totalTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
+                completedTasksQ = completedTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
+                pendingTasksQ = pendingTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
+                overdueTasksQ = overdueTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
+                todayTasksQ = todayTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
+                upcomingTasksQ = upcomingTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
+            }
 
-            const { count: pending_tasks } = await supabase
-                .from("tasks").select("*", { count: "exact", head: true })
-                .eq("status", false);
+            const { count: total_tasks } = await totalTasksQ;
+            const { count: completed_tasks } = await completedTasksQ;
+            const { count: pending_tasks } = await pendingTasksQ;
+            const { count: overdue_tasks } = await overdueTasksQ;
+            const { count: today_tasks } = await todayTasksQ;
+            const { count: upcoming_tasks } = await upcomingTasksQ;
 
-            // Muddati o'tgan: date < today va status = false
-            const { count: overdue_tasks } = await supabase
-                .from("tasks").select("*", { count: "exact", head: true })
-                .eq("status", false)
-                .lt("date", today.toISOString().split("T")[0]);
+            // Qo'ng'iroqlar (dateRange bilan)
+            let totalCallsQ = supabase.from("calls").select("*", { count: "exact", head: true });
+            let callsTodayQ = supabase.from("calls").select("*", { count: "exact", head: true }).gte("created_at", today.toISOString());
+            let callsWeekQ = supabase.from("calls").select("*", { count: "exact", head: true }).gte("created_at", weekAgo.toISOString());
 
-            // Bugungi: date = today
-            const { count: today_tasks } = await supabase
-                .from("tasks").select("*", { count: "exact", head: true })
-                .eq("date", today.toISOString().split("T")[0]);
+            if (dateRange) {
+                totalCallsQ = applyDateRange(totalCallsQ, dateRange);
+                callsTodayQ = applyDateRange(callsTodayQ, dateRange);
+                callsWeekQ = applyDateRange(callsWeekQ, dateRange);
+            }
 
-            // Yaqinlashayotgan: date > today va date <= today + 3 kun
-            const { count: upcoming_tasks } = await supabase
-                .from("tasks").select("*", { count: "exact", head: true })
-                .gt("date", today.toISOString().split("T")[0])
-                .lte("date", threeDaysLater.toISOString().split("T")[0]);
-
-            // Qo'ng'iroqlar
-            const { count: total_calls } = await supabase
-                .from("calls")
-                .select("*", { count: "exact", head: true });
-
-            const { count: calls_today } = await supabase
-                .from("calls")
-                .select("*", { count: "exact", head: true })
-                .gte("created_at", today.toISOString());
-
-            const { count: calls_week } = await supabase
-                .from("calls")
-                .select("*", { count: "exact", head: true })
-                .gte("created_at", weekAgo.toISOString());
+            const { count: total_calls } = await totalCallsQ;
+            const { count: calls_today } = await callsTodayQ;
+            const { count: calls_week } = await callsWeekQ;
 
             const [
                 { count: total_leads },
@@ -301,16 +318,15 @@ export interface TopCaller {
     call_count: number;
 }
 
-export function useTopCallers(branchId: string | null) {
+export function useTopCallers(branchId: string | null, dateRange?: DashboardDateRange) {
     const supabase = createClient();
 
     return useQuery({
-        queryKey: ["top-callers", branchId],
+        queryKey: ["top-callers", branchId, dateRange?.startDate, dateRange?.endDate],
         queryFn: async () => {
             if (!branchId) return [];
 
-            // 1. Branchdagi xodimlarni olamiz (user_id kerak calls uchun)
-            // xodimlar jadvalida employee_id (auth id) bor deb faraz qilamiz (use-employee.ts asosida)
+            // 1. Branchdagi xodimlarni olamiz
             const { data: employees, error: empError } = await supabase
                 .from("xodimlar")
                 .select("id, name, employee_id, user_id")
@@ -320,14 +336,16 @@ export function useTopCallers(branchId: string | null) {
             if (empError) throw empError;
             if (!employees?.length) return [];
 
-            // 2. Har bir xodim uchun qo'ng'iroqlar sonini olamiz (row emas, faqat count — 1000 limit muammosi yo'q)
+            // 2. Har bir xodim uchun qo'ng'iroqlar sonini olamiz (dateRange bilan)
             const results: TopCaller[] = await Promise.all(
                 employees.map(async (e) => {
-                    const { count } = await supabase
+                    let q = supabase
                         .from("calls")
                         .select("*", { count: "exact", head: true })
                         .eq("user_id", e.user_id);
+                    q = applyDateRange(q, dateRange);
 
+                    const { count } = await q;
                     return {
                         employee_id: e.user_id,
                         employee_name: e.name,

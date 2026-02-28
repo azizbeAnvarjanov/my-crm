@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useBranch } from "@/components/app-sidebar";
 import { useEmployee } from "@/hooks/use-employee";
+import { usePipelines, type Pipeline } from "@/hooks/use-pipeline";
 import {
     Users,
     Loader2,
@@ -11,6 +12,8 @@ import {
     ChevronRight,
     UserCheck,
     Search,
+    Building2,
+    GitBranch,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,8 +64,12 @@ const ITEMS_PER_PAGE = 20;
 
 export default function NotAssignedLeadsPage() {
     const supabase = createClient();
-    const { selectedBranch } = useBranch();
+    const { selectedBranch, branches } = useBranch();
     const { data: currentEmployee, isLoading: employeeLoading } = useEmployee();
+
+    // Branch & Pipeline filter state
+    const [selectedBranchId, setSelectedBranchId] = useState<string>("");
+    const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
 
     const [leads, setLeads] = useState<Lead[]>([]);
     const [managers, setManagers] = useState<Manager[]>([]);
@@ -81,18 +88,46 @@ export default function NotAssignedLeadsPage() {
 
     // Permissions
     const isAdmin = currentEmployee?.role === "super-admin";
-    const branchId = selectedBranch?.id;
+
+    // Fetch pipelines for selected branch
+    const { data: pipelines, isLoading: pipelinesLoading } = usePipelines(selectedBranchId || null);
+
+    // Auto-select branch from sidebar
+    useEffect(() => {
+        if (selectedBranch?.id && !selectedBranchId) {
+            setSelectedBranchId(selectedBranch.id);
+        }
+    }, [selectedBranch]);
+
+    // Auto-select first pipeline when pipelines load or branch changes
+    useEffect(() => {
+        if (pipelines && pipelines.length > 0) {
+            // Check if current selection is still valid
+            const currentStillValid = pipelines.some(p => p.id === selectedPipelineId);
+            if (!currentStillValid) {
+                setSelectedPipelineId(pipelines[0].id);
+            }
+        } else if (pipelines && pipelines.length === 0) {
+            setSelectedPipelineId("");
+        }
+    }, [pipelines]);
+
+    // Reset page when filters change
+    useEffect(() => {
+        setCurrentPage(1);
+        setSelectedLeads([]);
+    }, [selectedBranchId, selectedPipelineId]);
 
     // Fetch managers from the selected branch
     useEffect(() => {
-        if (!branchId || !isAdmin) return;
+        if (!selectedBranchId || !isAdmin) return;
 
         const fetchManagers = async () => {
             try {
                 const { data, error } = await supabase
                     .from("xodimlar")
                     .select("id, employee_id, name, email, role, branch_id")
-                    .eq("branch_id", branchId)
+                    .eq("branch_id", selectedBranchId)
                     .eq("role", "manager")
                     .order("name");
 
@@ -104,14 +139,21 @@ export default function NotAssignedLeadsPage() {
         };
 
         fetchManagers();
-    }, [branchId, isAdmin, supabase]);
+    }, [selectedBranchId, isAdmin, supabase]);
 
-    // Fetch leads with employee_id = null
+    // Fetch leads with employee_id = null filtered by pipeline
     useEffect(() => {
         fetchLeads();
-    }, [currentPage, searchQuery, branchId]);
+    }, [currentPage, searchQuery, selectedPipelineId]);
 
     const fetchLeads = async () => {
+        if (!selectedPipelineId) {
+            setLeads([]);
+            setTotalCount(0);
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
         try {
             // Build query
@@ -119,6 +161,7 @@ export default function NotAssignedLeadsPage() {
                 .from("leads")
                 .select("*", { count: "exact" })
                 .is("employee_id", null)
+                .eq("pipeline_id", selectedPipelineId)
                 .order("created_at", { ascending: false });
 
             // Add search filter
@@ -202,6 +245,19 @@ export default function NotAssignedLeadsPage() {
         }
     };
 
+    // Handle branch change
+    const handleBranchChange = (branchId: string) => {
+        setSelectedBranchId(branchId);
+        setSelectedPipelineId(""); // Reset pipeline when branch changes
+        setSearchQuery("");
+    };
+
+    // Handle pipeline change
+    const handlePipelineChange = (pipelineId: string) => {
+        setSelectedPipelineId(pipelineId);
+        setSearchQuery("");
+    };
+
     // Pagination
     const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
     const canGoPrevious = currentPage > 1;
@@ -221,6 +277,16 @@ export default function NotAssignedLeadsPage() {
         }
     };
 
+    // Get current pipeline name
+    const currentPipeline = useMemo(() => {
+        return pipelines?.find(p => p.id === selectedPipelineId);
+    }, [pipelines, selectedPipelineId]);
+
+    // Get current branch name
+    const currentBranch = useMemo(() => {
+        return branches?.find(b => b.id === selectedBranchId);
+    }, [branches, selectedBranchId]);
+
     // Loading state
     if (employeeLoading) {
         return (
@@ -237,7 +303,7 @@ export default function NotAssignedLeadsPage() {
                 <Card className="max-w-md">
                     <CardContent className="pt-6 text-center">
                         <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                        <h2 className="text-xl font-semibold mb-2">Ruxsat yo'q</h2>
+                        <h2 className="text-xl font-semibold mb-2">Ruxsat yo&apos;q</h2>
                         <p className="text-muted-foreground">
                             Bu sahifaga faqat super-admin kirishi mumkin.
                         </p>
@@ -258,7 +324,7 @@ export default function NotAssignedLeadsPage() {
                     <div>
                         <h1 className="text-2xl font-bold text-foreground">Biriktirilmagan Lidlar</h1>
                         <p className="text-muted-foreground text-sm">
-                            Hali xodimga biriktirilmagan lidlar ro'yxati
+                            Hali xodimga biriktirilmagan lidlar ro&apos;yxati
                         </p>
                     </div>
                 </div>
@@ -272,37 +338,123 @@ export default function NotAssignedLeadsPage() {
                 )}
             </div>
 
-            {/* Search and stats */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Ism yoki telefon bo'yicha qidirish..."
-                        value={searchQuery}
-                        onChange={(e) => {
-                            setSearchQuery(e.target.value);
-                            setCurrentPage(1);
-                        }}
-                        className="pl-10"
-                    />
+            {/* Filters: Branch + Pipeline */}
+            <div className="flex flex-wrap items-end gap-5">
+                {/* Branch select */}
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Building2 className="h-3.5 w-3.5" />
+                        Filial
+                    </label>
+                    <Select value={selectedBranchId} onValueChange={handleBranchChange}>
+                        <SelectTrigger>
+                            <SelectValue placeholder="Filial tanlang" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {branches.map((branch) => (
+                                <SelectItem key={branch.id} value={branch.id}>
+                                    {branch.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
-                <div className="flex items-center justify-end gap-2">
-                    <Badge variant="outline" className="text-base px-4 py-2">
-                        Jami: <span className="font-bold ml-1">{totalCount}</span> ta lid
-                    </Badge>
+
+                {/* Pipeline select */}
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <GitBranch className="h-3.5 w-3.5" />
+                        Voronka (Pipeline)
+                    </label>
+                    <Select
+                        value={selectedPipelineId}
+                        onValueChange={handlePipelineChange}
+                        disabled={!selectedBranchId || pipelinesLoading}
+                    >
+                        <SelectTrigger>
+                            <SelectValue placeholder={
+                                pipelinesLoading
+                                    ? "Yuklanmoqda..."
+                                    : !selectedBranchId
+                                        ? "Avval filial tanlang"
+                                        : pipelines?.length === 0
+                                            ? "Pipeline topilmadi"
+                                            : "Pipeline tanlang"
+                            } />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {pipelines?.map((pipeline) => (
+                                <SelectItem key={pipeline.id} value={pipeline.id}>
+                                    {pipeline.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                {/* Search */}
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Search className="h-3.5 w-3.5" />
+                        Qidirish
+                    </label>
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Ism yoki telefon..."
+                            value={searchQuery}
+                            onChange={(e) => {
+                                setSearchQuery(e.target.value);
+                                setCurrentPage(1);
+                            }}
+                            className="pl-10"
+                        />
+                    </div>
+                </div>
+
+                {/* Stats */}
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">Statistika</label>
+                    <div className="flex items-center h-10 gap-2">
+                        <Badge variant="outline" className="text-sm px-3 py-1.5">
+                            Jami: <span className="font-bold ml-1">{totalCount}</span> ta lid
+                        </Badge>
+                        {currentPipeline && (
+                            <Badge variant="secondary" className="text-sm px-3 py-1.5">
+                                {currentPipeline.name}
+                            </Badge>
+                        )}
+                    </div>
                 </div>
             </div>
 
             {/* Content */}
             <Card className="border-border bg-card">
                 <CardHeader>
-                    <CardTitle>Lidlar ro'yxati</CardTitle>
+                    <CardTitle className="flex items-center gap-2">
+                        Lidlar ro&apos;yxati
+                        {currentBranch && currentPipeline && (
+                            <span className="text-sm font-normal text-muted-foreground">
+                                — {currentBranch.name} / {currentPipeline.name}
+                            </span>
+                        )}
+                    </CardTitle>
                     <CardDescription>
                         Lidlarni checkbox bilan belgilab managerga biriktiring
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    {loading ? (
+                    {!selectedPipelineId ? (
+                        <div className="text-center py-16">
+                            <GitBranch className="h-16 w-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                            <h3 className="text-lg font-medium text-foreground mb-2">
+                                Filial va voronka tanlang
+                            </h3>
+                            <p className="text-muted-foreground max-w-md mx-auto">
+                                Lidlarni ko&apos;rish uchun yuqoridagi filtrlardan filial va voronkani tanlang
+                            </p>
+                        </div>
+                    ) : loading ? (
                         <div className="flex items-center justify-center py-16">
                             <Loader2 className="h-8 w-8 animate-spin text-primary" />
                         </div>
@@ -315,7 +467,7 @@ export default function NotAssignedLeadsPage() {
                             <p className="text-muted-foreground max-w-md mx-auto">
                                 {searchQuery
                                     ? "Qidiruv bo'yicha natija topilmadi"
-                                    : "Hozircha biriktirilmagan lidlar yo'q"}
+                                    : "Bu voronkada biriktirilmagan lidlar yo'q"}
                             </p>
                         </div>
                     ) : (
@@ -326,7 +478,7 @@ export default function NotAssignedLeadsPage() {
                                         <tr className="bg-muted/50 border-b border-border">
                                             <th className="w-12 p-3 text-left">
                                                 <Checkbox
-                                                    checked={selectedLeads.length === leads.length}
+                                                    checked={selectedLeads.length === leads.length && leads.length > 0}
                                                     onCheckedChange={toggleSelectAll}
                                                 />
                                             </th>
@@ -441,7 +593,7 @@ export default function NotAssignedLeadsPage() {
                             </label>
                             {managers.length === 0 ? (
                                 <p className="text-sm text-muted-foreground p-4 bg-muted/30 rounded-lg">
-                                    Bu filialda hali managerlar yo'q
+                                    Bu filialda hali managerlar yo&apos;q
                                 </p>
                             ) : (
                                 <Select value={selectedManagerId} onValueChange={setSelectedManagerId}>

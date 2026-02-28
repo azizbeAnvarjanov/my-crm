@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useBranch } from "@/components/app-sidebar";
 import { usePipelines } from "@/hooks/use-pipeline";
 import {
@@ -9,6 +9,7 @@ import {
   useEmployeeConversion,
   useLeadsTrend,
   useTopCallers,
+  DashboardDateRange,
 } from "@/hooks/use-dashboard-stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -46,8 +47,11 @@ import {
   ListChecks,
   AlertTriangle,
   Clock,
+  Calendar,
+  CalendarDays,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { useTheme } from "@/lib/providers/theme-provider";
 
 const COLORS = [
@@ -78,6 +82,57 @@ export default function DashboardPage() {
     "day" | "week" | "month" | "year"
   >("month");
 
+  // Date filter state
+  type DatePeriod = "all" | "last7" | "last30" | "current_month" | "last_month" | "custom";
+  const [datePeriod, setDatePeriod] = useState<DatePeriod>("all");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+
+  // Compute dateRange from selected period
+  const dateRange: DashboardDateRange | undefined = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toISOString().split("T")[0];
+
+    switch (datePeriod) {
+      case "all":
+        return undefined;
+      case "last7": {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 6);
+        return { startDate: d.toISOString().split("T")[0], endDate: todayStr };
+      }
+      case "last30": {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 29);
+        return { startDate: d.toISOString().split("T")[0], endDate: todayStr };
+      }
+      case "current_month": {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        return {
+          startDate: start.toISOString().split("T")[0],
+          endDate: end.toISOString().split("T")[0],
+        };
+      }
+      case "last_month": {
+        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth(), 0);
+        return {
+          startDate: start.toISOString().split("T")[0],
+          endDate: end.toISOString().split("T")[0],
+        };
+      }
+      case "custom": {
+        if (customStartDate && customEndDate) {
+          return { startDate: customStartDate, endDate: customEndDate };
+        }
+        return undefined;
+      }
+      default:
+        return undefined;
+    }
+  }, [datePeriod, customStartDate, customEndDate]);
+
   // Fetch pipelines for the branch
   const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines(
     branchId ?? null,
@@ -92,7 +147,7 @@ export default function DashboardPage() {
 
   // Fetch dashboard data
   const { data: stats, isLoading: statsLoading } =
-    useDashboardStats(selectedPipelineId);
+    useDashboardStats(selectedPipelineId, dateRange);
   const { data: leadsByStage, isLoading: stagesLoading } =
     useLeadsByStage(selectedPipelineId);
   const { data: employeeConversion, isLoading: employeesLoading } =
@@ -103,6 +158,7 @@ export default function DashboardPage() {
   );
   const { data: topCallers, isLoading: callersLoading } = useTopCallers(
     branchId ?? null,
+    dateRange,
   );
 
   // Prepare Task Data for Donut Chart
@@ -145,25 +201,83 @@ export default function DashboardPage() {
         </div>
 
         {/* Pipeline Selector */}
-        <div className="w-full sm:w-64">
-          <Label className="text-xs text-muted-foreground mb-1.5 block">
-            Pipeline
-          </Label>
-          <Select
-            value={selectedPipelineId}
-            onValueChange={setSelectedPipelineId}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Pipeline tanlang" />
-            </SelectTrigger>
-            <SelectContent>
-              {pipelines.map((pipeline) => (
-                <SelectItem key={pipeline.id} value={pipeline.id}>
-                  {pipeline.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 block">
+              Pipeline
+            </Label>
+            <Select
+              value={selectedPipelineId}
+              onValueChange={setSelectedPipelineId}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue placeholder="Pipeline tanlang" />
+              </SelectTrigger>
+              <SelectContent>
+                {pipelines.map((pipeline) => (
+                  <SelectItem key={pipeline.id} value={pipeline.id}>
+                    {pipeline.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Date Period Filter */}
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 block">
+              <CalendarDays className="h-3 w-3 inline mr-1" />
+              Davr
+            </Label>
+            <Select
+              value={datePeriod}
+              onValueChange={(v) => setDatePeriod(v as DatePeriod)}
+            >
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Doimiy</SelectItem>
+                <SelectItem value="last7">Oxirgi 7 kun</SelectItem>
+                <SelectItem value="last30">Oxirgi oylik</SelectItem>
+                <SelectItem value="current_month">Joriy oy</SelectItem>
+                <SelectItem value="last_month">O&apos;tgan oy</SelectItem>
+                <SelectItem value="custom">Custom</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Custom Date Inputs */}
+          {datePeriod === "custom" && (
+            <>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Dan</Label>
+                <Input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="w-36"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Gacha</Label>
+                <Input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="w-36"
+                />
+              </div>
+            </>
+          )}
+
+          {/* Active filter indicator */}
+          {dateRange && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/20 text-xs text-primary font-medium self-end">
+              <Calendar className="h-3.5 w-3.5" />
+              {dateRange.startDate} — {dateRange.endDate}
+            </div>
+          )}
         </div>
       </div>
 

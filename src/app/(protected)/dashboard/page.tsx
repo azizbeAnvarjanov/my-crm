@@ -414,7 +414,7 @@ export default function DashboardPage() {
                 <CheckCircle2 className="h-4 w-4 text-green-500" />
               </div>
               <span className="text-xs font-medium text-muted-foreground">
-                Vazifalar
+                Eslatmalar
               </span>
             </div>
             <div className="text-2xl md:text-3xl font-bold text-green-500">
@@ -831,7 +831,7 @@ export default function DashboardPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              Vazifalar Taqsimoti
+              Eslatmalar Taqsimoti
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center justify-center h-[300px]">
@@ -906,10 +906,10 @@ export default function DashboardPage() {
                   <ListChecks className="h-6 w-6 text-muted-foreground" />
                 </div>
                 <p className="text-sm font-medium text-foreground">
-                  Vazifalar yo&apos;q
+                  Eslatmalar yo&apos;q
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Vazifalar qo&apos;shilganda ko&apos;rinadi
+                  Eslatmalar qo&apos;shilganda ko&apos;rinadi
                 </p>
               </div>
             )}

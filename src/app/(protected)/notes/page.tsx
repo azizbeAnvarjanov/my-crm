@@ -295,8 +295,8 @@ export default function NotesPage() {
                     </h1>
                     <p className="text-muted-foreground mt-1">
                         {isAdmin
-                            ? "Barcha xodimlarning vazifalar va eslatmalari"
-                            : "Kunlik vazifalar va eslatmalar"}
+                            ? "Barcha xodimlarning eslatmalari"
+                            : "Kunlik eslatmalar"}
                     </p>
                 </div>
                 {/* Hide add button for admin */}

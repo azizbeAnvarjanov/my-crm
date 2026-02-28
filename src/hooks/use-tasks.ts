@@ -3,6 +3,15 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 
+export type TaskType = 'qayta_aloqa' | 'uchrashuv' | 'eslatma' | 'boshqa';
+
+export const TASK_TYPES: { value: TaskType; label: string; icon: string }[] = [
+    { value: 'qayta_aloqa', label: 'Qayta aloqa', icon: '📞' },
+    { value: 'uchrashuv', label: 'Uchrashuv', icon: '🤝' },
+    { value: 'eslatma', label: 'Eslatma', icon: '📝' },
+    { value: 'boshqa', label: 'Boshqa', icon: '📋' },
+];
+
 export interface Task {
     id: string;
     text: string;
@@ -11,6 +20,8 @@ export interface Task {
     date: string | null;
     time: string | null;
     employee_id: string;
+    task_type: TaskType;
+    result: string | null;
     created_at?: string;
     // Joined data
     lead?: {
@@ -31,6 +42,7 @@ export interface CreateTaskInput {
     date?: string | null;
     time?: string | null;
     employee_id: string;
+    task_type?: TaskType;
 }
 
 export interface UpdateTaskInput {
@@ -40,6 +52,8 @@ export interface UpdateTaskInput {
     lead_id?: string | null;
     date?: string | null;
     time?: string | null;
+    task_type?: TaskType;
+    result?: string | null;
 }
 
 // Query keys
@@ -216,6 +230,7 @@ export function useCreateTask() {
                     date: input.date || null,
                     time: input.time || null,
                     employee_id: input.employee_id,
+                    task_type: input.task_type || 'qayta_aloqa',
                 })
                 .select(`
                     *,
@@ -255,6 +270,8 @@ export function useUpdateTask() {
                     ...(input.lead_id !== undefined && { lead_id: input.lead_id }),
                     ...(input.date !== undefined && { date: input.date }),
                     ...(input.time !== undefined && { time: input.time }),
+                    ...(input.task_type !== undefined && { task_type: input.task_type }),
+                    ...(input.result !== undefined && { result: input.result }),
                 })
                 .eq("id", input.id)
                 .select(`
@@ -282,11 +299,15 @@ export function useToggleTaskStatus() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ id, status }: { id: string; status: boolean }) => {
+        mutationFn: async ({ id, status, result }: { id: string; status: boolean; result?: string }) => {
             const supabase = createClient();
+            const updateData: any = { status };
+            if (result !== undefined) {
+                updateData.result = result;
+            }
             const { data, error } = await supabase
                 .from("tasks")
-                .update({ status })
+                .update(updateData)
                 .eq("id", id)
                 .select()
                 .single();

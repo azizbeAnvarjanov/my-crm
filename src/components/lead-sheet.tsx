@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react"
-import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Volume2, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check } from "lucide-react";
+import { useState, useEffect, useMemo } from "react"
+import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Volume2, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle } from "lucide-react";
 import {
     Sheet,
     SheetContent,
@@ -26,10 +26,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Lead, Stage } from "@/hooks/use-pipeline";
-import { useTasksByLead, useCreateTask, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
+import { useTasksByLead, useCreateTask, useUpdateTask, useDeleteTask, useToggleTaskStatus, TASK_TYPES, TaskType } from "@/hooks/use-tasks";
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
 import { Call } from "@/hooks/use-calls";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 
 // Helper function to format duration
 function formatDuration(seconds: number): string {
@@ -68,13 +76,29 @@ export function LeadSheet({
     const [newTaskText, setNewTaskText] = useState("");
     const [newTaskDate, setNewTaskDate] = useState("");
     const [newTaskTime, setNewTaskTime] = useState("");
+    const [newTaskType, setNewTaskType] = useState<TaskType>("qayta_aloqa");
     const [editingTask, setEditingTask] = useState<any | null>(null);
+    const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
+    const [taskResult, setTaskResult] = useState("");
 
     const { data: employee } = useEmployee();
     const { data: tasks = [], isLoading: tasksLoading } = useTasksByLead(lead?.id || "");
     const createTaskMutation = useCreateTask();
     const updateTaskMutation = useUpdateTask();
     const deleteTaskMutation = useDeleteTask();
+    const toggleTaskMutation = useToggleTaskStatus();
+
+    // Today's pending tasks
+    const today = new Date().toISOString().split("T")[0];
+    const todayPendingTasks = useMemo(() => {
+        return tasks.filter(t => !t.status && t.date === today);
+    }, [tasks, today]);
+    const pendingTasks = useMemo(() => {
+        return tasks.filter(t => !t.status);
+    }, [tasks]);
+    const completedTasks = useMemo(() => {
+        return tasks.filter(t => t.status);
+    }, [tasks]);
 
     // Reset edited lead when lead changes
     useEffect(() => {
@@ -221,13 +245,42 @@ export function LeadSheet({
                 date: newTaskDate || null,
                 time: newTaskTime || null,
                 status: false,
+                task_type: newTaskType,
             });
 
             setNewTaskText("");
             setNewTaskDate("");
             setNewTaskTime("");
+            setNewTaskType("qayta_aloqa");
         } catch (error) {
             console.error("Error creating task:", error);
+        }
+    };
+
+    const handleCompleteTask = async () => {
+        if (!completingTaskId || !taskResult.trim()) return;
+
+        try {
+            await toggleTaskMutation.mutateAsync({
+                id: completingTaskId,
+                status: true,
+                result: taskResult.trim(),
+            });
+            setCompletingTaskId(null);
+            setTaskResult("");
+        } catch (error) {
+            console.error("Error completing task:", error);
+        }
+    };
+
+    const handleUncompleteTask = async (taskId: string) => {
+        try {
+            await toggleTaskMutation.mutateAsync({
+                id: taskId,
+                status: false,
+            });
+        } catch (error) {
+            console.error("Error:", error);
         }
     };
 
@@ -240,6 +293,7 @@ export function LeadSheet({
                 text: editingTask.text,
                 date: editingTask.date,
                 time: editingTask.time,
+                task_type: editingTask.task_type,
             });
             setEditingTask(null);
         } catch (error) {
@@ -599,10 +653,59 @@ export function LeadSheet({
                     </div>
                     {/* Left Side - Calls & Notes */}
                     <div className="w-2/5 border-r border-border p-6 overflow-y-auto">
+                        {/* TODAY'S URGENT TASKS - shown immediately */}
+                        {todayPendingTasks.length > 0 && (
+                            <div className="mb-4 p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <AlertCircle className="h-4 w-4 text-orange-500" />
+                                    <span className="text-sm font-semibold text-orange-500">
+                                        Bugungi eslatmalar ({todayPendingTasks.length})
+                                    </span>
+                                </div>
+                                <div className="space-y-2">
+                                    {todayPendingTasks.map((task) => {
+                                        const typeInfo = TASK_TYPES.find(t => t.value === task.task_type);
+                                        return (
+                                            <div key={task.id} className="flex items-center justify-between bg-background/60 rounded-md p-2">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-sm">{typeInfo?.icon}</span>
+                                                    <div>
+                                                        <p className="text-xs font-medium">{task.text}</p>
+                                                        <p className="text-[10px] text-muted-foreground">
+                                                            {task.time || "Vaqt belgilanmagan"} • {typeInfo?.label}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-xs border-green-500/50 text-green-600 hover:bg-green-500/10"
+                                                    onClick={() => {
+                                                        setCompletingTaskId(task.id);
+                                                        setTaskResult("");
+                                                    }}
+                                                >
+                                                    <Check className="h-3 w-3 mr-1" />
+                                                    Bajarildi
+                                                </Button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
                         <Tabs defaultValue="calls" className="h-full flex flex-col">
                             <TabsList className="grid w-full grid-cols-2 mb-4">
                                 <TabsTrigger value="calls">Qo'ng'iroqlar</TabsTrigger>
-                                <TabsTrigger value="notes">Eslatmalar</TabsTrigger>
+                                <TabsTrigger value="notes" className="relative">
+                                    Eslatmalar
+                                    {pendingTasks.length > 0 && (
+                                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full h-4 w-4 flex items-center justify-center">
+                                            {pendingTasks.length}
+                                        </span>
+                                    )}
+                                </TabsTrigger>
                             </TabsList>
 
                             <TabsContent value="calls" className="flex-1 overflow-y-auto space-y-2">
@@ -703,11 +806,31 @@ export function LeadSheet({
                                 {/* Add New Task */}
                                 <Card className="border-border">
                                     <CardHeader className="p-3">
-                                        <CardTitle className="text-sm">Yangi eslatma</CardTitle>
+                                        <CardTitle className="text-sm">Yangi vazifa</CardTitle>
                                     </CardHeader>
                                     <CardContent className="p-3 pt-0 space-y-2">
+                                        {/* Task Type Select */}
+                                        <Select
+                                            value={newTaskType}
+                                            onValueChange={(v) => setNewTaskType(v as TaskType)}
+                                        >
+                                            <SelectTrigger className="h-9">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {TASK_TYPES.map((type) => (
+                                                    <SelectItem key={type.value} value={type.value}>
+                                                        <span className="flex items-center gap-2">
+                                                            <span>{type.icon}</span>
+                                                            <span>{type.label}</span>
+                                                        </span>
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+
                                         <Textarea
-                                            placeholder="Eslatma matni..."
+                                            placeholder="Vazifa matni..."
                                             value={newTaskText}
                                             onChange={(e) => setNewTaskText(e.target.value)}
                                             rows={2}
@@ -742,7 +865,6 @@ export function LeadSheet({
                                     </CardContent>
                                 </Card>
 
-                                {/* Task List */}
                                 {tasksLoading ? (
                                     <div className="flex justify-center py-8">
                                         <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -753,90 +875,184 @@ export function LeadSheet({
                                         <p>Eslatmalar yo'q</p>
                                     </div>
                                 ) : (
-                                    tasks.map((task) => (
-                                        <Card key={task.id} className="border-border">
-                                            {editingTask?.id === task.id ? (
-                                                <CardContent className="p-3 space-y-2">
-                                                    <Textarea
-                                                        value={editingTask.text}
-                                                        onChange={(e) => setEditingTask({ ...editingTask, text: e.target.value })}
-                                                        rows={2}
-                                                    />
-                                                    <div className="flex gap-2">
-                                                        <Input
-                                                            type="date"
-                                                            value={editingTask.date || ""}
-                                                            onChange={(e) => setEditingTask({ ...editingTask, date: e.target.value })}
-                                                            className="flex-1"
-                                                        />
-                                                        <Input
-                                                            type="time"
-                                                            value={editingTask.time || ""}
-                                                            onChange={(e) => setEditingTask({ ...editingTask, time: e.target.value })}
-                                                            className="flex-1"
-                                                        />
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <Button
-                                                            onClick={handleUpdateTask}
-                                                            disabled={updateTaskMutation.isPending}
-                                                            size="sm"
-                                                            className="flex-1"
-                                                        >
-                                                            {updateTaskMutation.isPending ? (
-                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                    <>
+                                        {/* Pending tasks */}
+                                        {pendingTasks.length > 0 && (
+                                            <div className="space-y-2">
+                                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Jarayondagi ({pendingTasks.length})</p>
+                                                {pendingTasks.map((task) => {
+                                                    const typeInfo = TASK_TYPES.find(t => t.value === task.task_type);
+                                                    return (
+                                                        <Card key={task.id} className={`border-border ${task.date === today ? 'border-orange-500/50 bg-orange-500/5' : ''}`}>
+                                                            {editingTask?.id === task.id ? (
+                                                                <CardContent className="p-3 space-y-2">
+                                                                    <Select
+                                                                        value={editingTask.task_type || 'qayta_aloqa'}
+                                                                        onValueChange={(v) => setEditingTask({ ...editingTask, task_type: v })}
+                                                                    >
+                                                                        <SelectTrigger className="h-9">
+                                                                            <SelectValue />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {TASK_TYPES.map((type) => (
+                                                                                <SelectItem key={type.value} value={type.value}>
+                                                                                    <span className="flex items-center gap-2">
+                                                                                        <span>{type.icon}</span>
+                                                                                        <span>{type.label}</span>
+                                                                                    </span>
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    <Textarea
+                                                                        value={editingTask.text}
+                                                                        onChange={(e) => setEditingTask({ ...editingTask, text: e.target.value })}
+                                                                        rows={2}
+                                                                    />
+                                                                    <div className="flex gap-2">
+                                                                        <Input
+                                                                            type="date"
+                                                                            value={editingTask.date || ""}
+                                                                            onChange={(e) => setEditingTask({ ...editingTask, date: e.target.value })}
+                                                                            className="flex-1"
+                                                                        />
+                                                                        <Input
+                                                                            type="time"
+                                                                            value={editingTask.time || ""}
+                                                                            onChange={(e) => setEditingTask({ ...editingTask, time: e.target.value })}
+                                                                            className="flex-1"
+                                                                        />
+                                                                    </div>
+                                                                    <div className="flex gap-2">
+                                                                        <Button
+                                                                            onClick={handleUpdateTask}
+                                                                            disabled={updateTaskMutation.isPending}
+                                                                            size="sm"
+                                                                            className="flex-1"
+                                                                        >
+                                                                            {updateTaskMutation.isPending ? (
+                                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                                            ) : (
+                                                                                <Save className="h-4 w-4 mr-2" />
+                                                                            )}
+                                                                            Saqlash
+                                                                        </Button>
+                                                                        <Button
+                                                                            onClick={() => setEditingTask(null)}
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                        >
+                                                                            Bekor
+                                                                        </Button>
+                                                                    </div>
+                                                                </CardContent>
                                                             ) : (
-                                                                <Save className="h-4 w-4 mr-2" />
+                                                                <CardHeader className="p-3 pb-2">
+                                                                    <div className="flex items-start justify-between">
+                                                                        <div className="flex-1">
+                                                                            <div className="flex items-center gap-1.5 mb-1">
+                                                                                <span className="text-sm">{typeInfo?.icon}</span>
+                                                                                <Badge variant="outline" className="text-[10px] h-4 px-1">
+                                                                                    {typeInfo?.label}
+                                                                                </Badge>
+                                                                            </div>
+                                                                            <p className="text-sm">{task.text}</p>
+                                                                            {(task.date || task.time) && (
+                                                                                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                                                                                    <Clock className="h-3 w-3" />
+                                                                                    {task.date && new Date(task.date).toLocaleDateString("uz-UZ")}
+                                                                                    {task.date && task.time && " • "}
+                                                                                    {task.time}
+                                                                                </p>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="flex gap-1">
+                                                                            <Button
+                                                                                size="icon"
+                                                                                variant="ghost"
+                                                                                onClick={() => {
+                                                                                    setCompletingTaskId(task.id);
+                                                                                    setTaskResult("");
+                                                                                }}
+                                                                                className="h-7 w-7 text-green-600 hover:bg-green-500/10"
+                                                                                title="Bajarildi"
+                                                                            >
+                                                                                <Check className="h-3 w-3" />
+                                                                            </Button>
+                                                                            <Button
+                                                                                size="icon"
+                                                                                variant="ghost"
+                                                                                onClick={() => setEditingTask(task)}
+                                                                                className="h-7 w-7"
+                                                                            >
+                                                                                <Edit2 className="h-3 w-3" />
+                                                                            </Button>
+                                                                            <Button
+                                                                                size="icon"
+                                                                                variant="ghost"
+                                                                                onClick={() => handleDeleteTask(task.id)}
+                                                                                className="h-7 w-7 text-destructive"
+                                                                            >
+                                                                                <Trash2 className="h-3 w-3" />
+                                                                            </Button>
+                                                                        </div>
+                                                                    </div>
+                                                                </CardHeader>
                                                             )}
-                                                            Saqlash
-                                                        </Button>
-                                                        <Button
-                                                            onClick={() => setEditingTask(null)}
-                                                            variant="outline"
-                                                            size="sm"
-                                                        >
-                                                            Bekor
-                                                        </Button>
-                                                    </div>
-                                                </CardContent>
-                                            ) : (
-                                                <>
-                                                    <CardHeader className="p-3 pb-2">
-                                                        <div className="flex items-start justify-between">
-                                                            <div className="flex-1">
-                                                                <p className="text-sm">{task.text}</p>
-                                                                {(task.date || task.time) && (
-                                                                    <p className="text-xs text-muted-foreground mt-1">
-                                                                        {task.date && new Date(task.date).toLocaleDateString("uz-UZ")}
-                                                                        {task.date && task.time && " • "}
-                                                                        {task.time}
-                                                                    </p>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex gap-1">
-                                                                <Button
-                                                                    size="icon"
-                                                                    variant="ghost"
-                                                                    onClick={() => setEditingTask(task)}
-                                                                    className="h-7 w-7"
-                                                                >
-                                                                    <Edit2 className="h-3 w-3" />
-                                                                </Button>
-                                                                <Button
-                                                                    size="icon"
-                                                                    variant="ghost"
-                                                                    onClick={() => handleDeleteTask(task.id)}
-                                                                    className="h-7 w-7 text-destructive"
-                                                                >
-                                                                    <Trash2 className="h-3 w-3" />
-                                                                </Button>
-                                                            </div>
-                                                        </div>
-                                                    </CardHeader>
-                                                </>
-                                            )}
-                                        </Card>
-                                    ))
+                                                        </Card>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+
+                                        {/* Completed tasks */}
+                                        {completedTasks.length > 0 && (
+                                            <div className="space-y-2">
+                                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bajarilgan ({completedTasks.length})</p>
+                                                {completedTasks.map((task) => {
+                                                    const typeInfo = TASK_TYPES.find(t => t.value === task.task_type);
+                                                    return (
+                                                        <Card key={task.id} className="border-border opacity-70">
+                                                            <CardHeader className="p-3 pb-2">
+                                                                <div className="flex items-start justify-between">
+                                                                    <div className="flex-1">
+                                                                        <div className="flex items-center gap-1.5 mb-1">
+                                                                            <span className="text-sm">{typeInfo?.icon}</span>
+                                                                            <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-500/50 text-green-600">
+                                                                                ✓ {typeInfo?.label}
+                                                                            </Badge>
+                                                                        </div>
+                                                                        <p className="text-sm line-through text-muted-foreground">{task.text}</p>
+                                                                        {task.result && (
+                                                                            <div className="mt-1.5 p-2 bg-green-500/10 rounded text-xs text-green-700 dark:text-green-400">
+                                                                                <span className="font-medium">Natija:</span> {task.result}
+                                                                            </div>
+                                                                        )}
+                                                                        {(task.date || task.time) && (
+                                                                            <p className="text-xs text-muted-foreground mt-1">
+                                                                                {task.date && new Date(task.date).toLocaleDateString("uz-UZ")}
+                                                                                {task.date && task.time && " • "}
+                                                                                {task.time}
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
+                                                                    <Button
+                                                                        size="icon"
+                                                                        variant="ghost"
+                                                                        onClick={() => handleUncompleteTask(task.id)}
+                                                                        className="h-7 w-7"
+                                                                        title="Qayta ochish"
+                                                                    >
+                                                                        <X className="h-3 w-3" />
+                                                                    </Button>
+                                                                </div>
+                                                            </CardHeader>
+                                                        </Card>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </TabsContent>
                         </Tabs>
@@ -844,6 +1060,42 @@ export function LeadSheet({
 
 
                 </div>
+
+                {/* Task Complete Dialog */}
+                <Dialog open={!!completingTaskId} onOpenChange={(open) => { if (!open) setCompletingTaskId(null); }}>
+                    <DialogContent className="bg-card border-border">
+                        <DialogHeader>
+                            <DialogTitle>Vazifani bajarish</DialogTitle>
+                            <DialogDescription>
+                                Vazifa natijasini yozing
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="py-4">
+                            <Textarea
+                                placeholder="Natija: masalan, uchrashuv bo'ldi, kelishildi..."
+                                value={taskResult}
+                                onChange={(e) => setTaskResult(e.target.value)}
+                                rows={3}
+                            />
+                        </div>
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setCompletingTaskId(null)}>
+                                Bekor qilish
+                            </Button>
+                            <Button
+                                onClick={handleCompleteTask}
+                                disabled={!taskResult.trim() || toggleTaskMutation.isPending}
+                            >
+                                {toggleTaskMutation.isPending ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                    <Check className="h-4 w-4 mr-2" />
+                                )}
+                                Bajarildi
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
             </SheetContent>
         </Sheet>
     );

@@ -254,7 +254,7 @@ export function useStageLeads({
     pipelineId,
     employeeId,
     searchQuery,
-    limit = 50,
+    limit = 20,
 }: UseStageLeadsOptions) {
     return useQuery({
         queryKey: stageLeadKeys.byStage(stageId, employeeId, searchQuery),
@@ -324,7 +324,7 @@ export function useLoadMoreStageLeads() {
             employeeId,
             searchQuery,
             offset,
-            limit = 50,
+            limit = 20,
         }: UseStageLeadsOptions & { offset: number }) => {
             const supabase = createClient();
 

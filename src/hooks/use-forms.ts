@@ -270,8 +270,6 @@ export function useSubmitForm() {
                     utm: form.utm,
                     status: "new",
                 })
-                .select()
-                .single();
 
             if (leadError) throw leadError;
             return lead;

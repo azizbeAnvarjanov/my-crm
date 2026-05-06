@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 
 // Dashboard statistikasi turlarini belgilaymiz
@@ -59,6 +59,11 @@ export interface DashboardDateRange {
     endDate: string;   // ISO string yoki YYYY-MM-DD
 }
 
+type DateRangeQuery<T> = {
+    gte: (column: string, value: string) => T;
+    lte: (column: string, value: string) => T;
+};
+
 const dashboardKeys = {
     all: ["dashboard-stats"] as const,
     stats: (pipelineId?: string, dateRange?: DashboardDateRange) => [...dashboardKeys.all, "stats", pipelineId, dateRange?.startDate, dateRange?.endDate] as const,
@@ -71,7 +76,7 @@ const dashboardKeys = {
 };
 
 // Sana filtri qo'llash helper
-function applyDateRange(query: any, dateRange?: DashboardDateRange, dateField = "created_at") {
+function applyDateRange<T extends DateRangeQuery<T>>(query: T, dateRange?: DashboardDateRange, dateField = "created_at") {
     if (!dateRange) return query;
     query = query.gte(dateField, `${dateRange.startDate}T00:00:00.000Z`);
     query = query.lte(dateField, `${dateRange.endDate}T23:59:59.999Z`);
@@ -85,10 +90,31 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
     return useQuery({
         queryKey: dashboardKeys.stats(pipelineId, dateRange),
         queryFn: async () => {
+            if (!pipelineId) {
+                return {
+                    total_leads: 0,
+                    unassigned_leads: 0,
+                    leads_today: 0,
+                    leads_week: 0,
+                    leads_month: 0,
+                    leads_year: 0,
+                    updated_today: 0,
+                    updated_week: 0,
+                    updated_month: 0,
+                    total_tasks: 0,
+                    completed_tasks: 0,
+                    pending_tasks: 0,
+                    overdue_tasks: 0,
+                    today_tasks: 0,
+                    upcoming_tasks: 0,
+                    total_calls: 0,
+                    calls_today: 0,
+                    calls_week: 0,
+                } as DashboardStats;
+            }
+
             const now = new Date();
             const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            const todayEnd = new Date(today);
-            todayEnd.setHours(23, 59, 59, 999);
             const weekAgo = new Date(today);
             weekAgo.setDate(weekAgo.getDate() - 7);
             const monthAgo = new Date(today);
@@ -147,13 +173,6 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
                 upcomingTasksQ = upcomingTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
             }
 
-            const { count: total_tasks } = await totalTasksQ;
-            const { count: completed_tasks } = await completedTasksQ;
-            const { count: pending_tasks } = await pendingTasksQ;
-            const { count: overdue_tasks } = await overdueTasksQ;
-            const { count: today_tasks } = await todayTasksQ;
-            const { count: upcoming_tasks } = await upcomingTasksQ;
-
             // Qo'ng'iroqlar (dateRange bilan)
             let totalCallsQ = supabase.from("calls").select("*", { count: "exact", head: true });
             let callsTodayQ = supabase.from("calls").select("*", { count: "exact", head: true }).gte("created_at", today.toISOString());
@@ -165,10 +184,6 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
                 callsWeekQ = applyDateRange(callsWeekQ, dateRange);
             }
 
-            const { count: total_calls } = await totalCallsQ;
-            const { count: calls_today } = await callsTodayQ;
-            const { count: calls_week } = await callsWeekQ;
-
             const [
                 { count: total_leads },
                 { count: leads_today },
@@ -178,6 +193,16 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
                 { count: updated_today },
                 { count: updated_week },
                 { count: updated_month },
+                { count: total_tasks },
+                { count: completed_tasks },
+                { count: pending_tasks },
+                { count: overdue_tasks },
+                { count: today_tasks },
+                { count: upcoming_tasks },
+                { count: total_calls },
+                { count: calls_today },
+                { count: calls_week },
+                { count: unassigned_leads },
             ] = await Promise.all([
                 totalLeadsQuery,
                 todayLeadsQuery,
@@ -187,14 +212,21 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
                 updatedTodayQuery,
                 updatedWeekQuery,
                 updatedMonthQuery,
+                totalTasksQ,
+                completedTasksQ,
+                pendingTasksQ,
+                overdueTasksQ,
+                todayTasksQ,
+                upcomingTasksQ,
+                totalCallsQ,
+                callsTodayQ,
+                callsWeekQ,
+                supabase
+                    .from("leads")
+                    .select("*", { count: "exact", head: true })
+                    .eq("pipeline_id", pipelineId)
+                    .is("employee_id", null),
             ]);
-
-            // Biriktirilmagan lidlar (employee_id = null, pipeline bo'yicha)
-            let unassignedQuery = supabase.from("leads").select("*", { count: "exact", head: true }).is("employee_id", null);
-            if (pipelineId) {
-                unassignedQuery = unassignedQuery.eq("pipeline_id", pipelineId);
-            }
-            const { count: unassigned_leads } = await unassignedQuery;
 
             return {
                 total_leads: total_leads || 0,
@@ -217,6 +249,8 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
                 calls_week: calls_week || 0,
             } as DashboardStats;
         },
+        enabled: !!pipelineId,
+        placeholderData: keepPreviousData,
     });
 }
 
@@ -227,31 +261,34 @@ export function useLeadsByStage(pipelineId?: string) {
     return useQuery({
         queryKey: dashboardKeys.leadsByStage(pipelineId),
         queryFn: async () => {
-            // 1. Avval pipelinedagi stage'larni olamiz
-            let stagesQuery = supabase.from("stages").select("id, name");
-            if (pipelineId) stagesQuery = stagesQuery.eq("pipeline_id", pipelineId);
+            if (!pipelineId) return [];
 
-            const { data: stages, error: stagesError } = await stagesQuery;
+            const [{ data: stages, error: stagesError }, { data: leads, error: leadsError }] =
+                await Promise.all([
+                    supabase
+                        .from("stages")
+                        .select("id, name")
+                        .eq("pipeline_id", pipelineId),
+                    supabase
+                        .from("leads")
+                        .select("stage_id")
+                        .eq("pipeline_id", pipelineId),
+                ]);
+
             if (stagesError) throw stagesError;
+            if (leadsError) throw leadsError;
             if (!stages?.length) return [];
 
-            // 2. Har bir stage uchun count olamiz (row emas!)
-            const results = await Promise.all(
-                stages.map(async (stage) => {
-                    let countQuery = supabase
-                        .from("leads")
-                        .select("*", { count: "exact", head: true })
-                        .eq("stage_id", stage.id);
-                    if (pipelineId) countQuery = countQuery.eq("pipeline_id", pipelineId);
+            const stageCounts = new Map<string, number>();
+            for (const lead of leads ?? []) {
+                stageCounts.set(lead.stage_id, (stageCounts.get(lead.stage_id) ?? 0) + 1);
+            }
 
-                    const { count } = await countQuery;
-                    return {
-                        stage_id: stage.id,
-                        stage_name: stage.name,
-                        count: count || 0,
-                    };
-                })
-            );
+            const results = stages.map((stage) => ({
+                stage_id: stage.id,
+                stage_name: stage.name,
+                count: stageCounts.get(stage.id) ?? 0,
+            }));
 
             const total = results.reduce((sum, r) => sum + r.count, 0);
 
@@ -260,6 +297,8 @@ export function useLeadsByStage(pipelineId?: string) {
                 percentage: total > 0 ? (item.count / total) * 100 : 0,
             })) as LeadsByStage[];
         },
+        enabled: !!pipelineId,
+        placeholderData: keepPreviousData,
     });
 }
 
@@ -270,7 +309,8 @@ export function useEmployeeConversion(conversionStageId?: string) {
     return useQuery({
         queryKey: ["employee-conversion", conversionStageId],
         queryFn: async () => {
-            // 1. Barcha xodimlarni olamiz
+            if (!conversionStageId) return [];
+
             const { data: employees, error: empError } = await supabase
                 .from("xodimlar")
                 .select("id, name");
@@ -278,41 +318,46 @@ export function useEmployeeConversion(conversionStageId?: string) {
             if (empError) throw empError;
             if (!employees?.length) return [];
 
-            // 2. Har bir xodim uchun total_leads va converted_leads count olamiz (row emas!)
-            const results = await Promise.all(
-                employees.map(async (emp) => {
-                    // Jami lidlar
-                    const { count: total_leads } = await supabase
-                        .from("leads")
-                        .select("*", { count: "exact", head: true })
-                        .eq("employee_id", emp.id);
+            const employeeIds = employees.map((employee) => employee.id);
+            const { data: leads, error: leadsError } = await supabase
+                .from("leads")
+                .select("employee_id, stage_id")
+                .in("employee_id", employeeIds);
 
-                    // Konversiya qilingan lidlar
-                    let converted_leads = 0;
-                    if (conversionStageId) {
-                        const { count } = await supabase
-                            .from("leads")
-                            .select("*", { count: "exact", head: true })
-                            .eq("employee_id", emp.id)
-                            .eq("stage_id", conversionStageId);
-                        converted_leads = count || 0;
-                    }
+            if (leadsError) throw leadsError;
 
-                    const totalCount = total_leads || 0;
-                    return {
-                        employee_id: emp.id,
-                        employee_name: emp.name,
-                        total_leads: totalCount,
-                        converted_leads,
-                        conversion_rate: totalCount > 0
-                            ? (converted_leads / totalCount) * 100
-                            : 0,
-                    };
-                })
-            );
+            const statsByEmployee = new Map<string, { total: number; converted: number }>();
+            for (const employee of employees) {
+                statsByEmployee.set(employee.id, { total: 0, converted: 0 });
+            }
+
+            for (const lead of leads ?? []) {
+                const current = statsByEmployee.get(lead.employee_id);
+                if (!current) continue;
+
+                current.total += 1;
+                if (lead.stage_id === conversionStageId) {
+                    current.converted += 1;
+                }
+            }
+
+            const results = employees.map((emp) => {
+                const stats = statsByEmployee.get(emp.id) ?? { total: 0, converted: 0 };
+                return {
+                    employee_id: emp.id,
+                    employee_name: emp.name,
+                    total_leads: stats.total,
+                    converted_leads: stats.converted,
+                    conversion_rate: stats.total > 0
+                        ? (stats.converted / stats.total) * 100
+                        : 0,
+                };
+            });
 
             return results.sort((a, b) => b.total_leads - a.total_leads);
         },
+        enabled: !!conversionStageId,
+        placeholderData: keepPreviousData,
     });
 }
 
@@ -334,30 +379,36 @@ export function useTopCallers(branchId: string | null, dateRange?: DashboardDate
             // 1. Branchdagi xodimlarni olamiz
             const { data: employees, error: empError } = await supabase
                 .from("xodimlar")
-                .select("id, name, employee_id, user_id")
+                .select("name, employee_id, user_id")
                 .eq("branch_id", branchId)
-                .not("employee_id", "is", null);
+                .not("employee_id", "is", null)
+                .not("user_id", "is", null);
 
             if (empError) throw empError;
             if (!employees?.length) return [];
 
-            // 2. Har bir xodim uchun qo'ng'iroqlar sonini olamiz (dateRange bilan)
-            const results: TopCaller[] = await Promise.all(
-                employees.map(async (e) => {
-                    let q = supabase
-                        .from("calls")
-                        .select("*", { count: "exact", head: true })
-                        .eq("user_id", e.user_id);
-                    q = applyDateRange(q, dateRange);
+            const userIds = employees.map((employee) => employee.user_id).filter(Boolean);
+            if (!userIds.length) return [];
 
-                    const { count } = await q;
-                    return {
-                        employee_id: e.user_id,
-                        employee_name: e.name,
-                        call_count: count || 0,
-                    };
-                })
-            );
+            let callsQuery = supabase
+                .from("calls")
+                .select("user_id")
+                .in("user_id", userIds);
+            callsQuery = applyDateRange(callsQuery, dateRange);
+
+            const { data: calls, error: callsError } = await callsQuery;
+            if (callsError) throw callsError;
+
+            const callCounts = new Map<string, number>();
+            for (const call of calls ?? []) {
+                callCounts.set(call.user_id, (callCounts.get(call.user_id) ?? 0) + 1);
+            }
+
+            const results: TopCaller[] = employees.map((employee) => ({
+                employee_id: employee.user_id,
+                employee_name: employee.name,
+                call_count: callCounts.get(employee.user_id) ?? 0,
+            }));
 
             // 3. Formatlash — faqat qo'ng'iroq qilganlarni ko'rsatamiz
             return results
@@ -366,6 +417,7 @@ export function useTopCallers(branchId: string | null, dateRange?: DashboardDate
                 .slice(0, 5); // Top 5
         },
         enabled: !!branchId,
+        placeholderData: keepPreviousData,
     });
 }
 
@@ -376,6 +428,8 @@ export function useLeadsTrend(period: "day" | "week" | "month" | "year", pipelin
     return useQuery({
         queryKey: dashboardKeys.leadsTrend(period, pipelineId),
         queryFn: async () => {
+            if (!pipelineId) return [];
+
             const now = new Date();
             let days = 30;
             let format: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
@@ -391,50 +445,47 @@ export function useLeadsTrend(period: "day" | "week" | "month" | "year", pipelin
                 format = { month: "short" };
             }
 
+            const startDate = new Date(now);
+            startDate.setDate(startDate.getDate() - (days - 1));
+            startDate.setHours(0, 0, 0, 0);
+
+            const endDate = new Date(now);
+            endDate.setHours(23, 59, 59, 999);
+
+            const { data, error } = await supabase
+                .from("leads")
+                .select("created_at")
+                .eq("pipeline_id", pipelineId)
+                .gte("created_at", startDate.toISOString())
+                .lte("created_at", endDate.toISOString());
+
+            if (error) throw error;
+
+            const countsByDay = new Map<string, number>();
+            for (const lead of data ?? []) {
+                const dateKey = lead.created_at.split("T")[0];
+                countsByDay.set(dateKey, (countsByDay.get(dateKey) ?? 0) + 1);
+            }
+
             // Har bir kun uchun count olamiz (row emas!)
             const result: LeadsTrend[] = [];
 
             // Parallel so'rovlar — har bir kun uchun count
-            const queries = [];
             for (let i = 0; i < days; i++) {
                 const date = new Date(now);
                 date.setDate(date.getDate() - (days - 1 - i));
                 const dateKey = date.toISOString().split("T")[0];
-                const dayStart = `${dateKey}T00:00:00.000Z`;
-                const dayEnd = `${dateKey}T23:59:59.999Z`;
-
-                queries.push({
+                result.push({
                     date: dateKey,
+                    count: countsByDay.get(dateKey) ?? 0,
                     label: date.toLocaleDateString("ru-RU", format),
-                    queryFn: async () => {
-                        let q = supabase
-                            .from("leads")
-                            .select("*", { count: "exact", head: true })
-                            .gte("created_at", dayStart)
-                            .lte("created_at", dayEnd);
-                        if (pipelineId) q = q.eq("pipeline_id", pipelineId);
-                        const { count } = await q;
-                        return count || 0;
-                    }
-                });
-            }
-
-            // Parallel bajaramiz (lekin juda ko'p bo'lmasligi uchun batch qilamiz)
-            const batchSize = 30;
-            for (let i = 0; i < queries.length; i += batchSize) {
-                const batch = queries.slice(i, i + batchSize);
-                const counts = await Promise.all(batch.map(q => q.queryFn()));
-                batch.forEach((q, idx) => {
-                    result.push({
-                        date: q.date,
-                        count: counts[idx],
-                        label: q.label,
-                    });
                 });
             }
 
             return result;
         },
+        enabled: !!pipelineId,
+        placeholderData: keepPreviousData,
     });
 }
 
@@ -517,6 +568,20 @@ export interface EmployeeProcessingTime {
     total_leads: number;
 }
 
+interface LeadProcessingLead {
+    created_at: string | null;
+    updated_at: string | null;
+    employee_id: string;
+    stage_id: string;
+    employee: {
+        name: string | null;
+    } | null;
+}
+
+interface ProcessedLead extends LeadProcessingLead {
+    processing_minutes: number;
+}
+
 export function useLeadProcessingTime(pipelineId?: string, dateRange?: DashboardDateRange, excludedStageIds?: string[]) {
     const supabase = createClient();
 
@@ -540,16 +605,17 @@ export function useLeadProcessingTime(pipelineId?: string, dateRange?: Dashboard
             if (!data?.length) return { overall: null, employees: [] };
 
             // Ignore qilingan stage'lardagi lidlarni filter qilamiz
+            const typedData = (data ?? []) as LeadProcessingLead[];
             const filteredData = excludedStageIds && excludedStageIds.length > 0
-                ? data.filter((lead: any) => !excludedStageIds.includes(lead.stage_id))
-                : data;
+                ? typedData.filter((lead) => !excludedStageIds.includes(lead.stage_id))
+                : typedData;
 
             if (!filteredData.length) return { overall: null, employees: [] };
 
             // Calculate processing times (updated_at - created_at in minutes)
-            const processedLeads = filteredData
-                .filter((lead: any) => lead.created_at)
-                .map((lead: any) => {
+            const processedLeads: ProcessedLead[] = filteredData
+                .filter((lead): lead is LeadProcessingLead & { created_at: string } => Boolean(lead.created_at))
+                .map((lead) => {
                     const created = new Date(lead.created_at).getTime();
                     const updated = lead.updated_at ? new Date(lead.updated_at).getTime() : created;
                     const diffMinutes = Math.max(0, (updated - created) / (1000 * 60));
@@ -562,7 +628,7 @@ export function useLeadProcessingTime(pipelineId?: string, dateRange?: Dashboard
             if (processedLeads.length === 0) return { overall: null, employees: [] };
 
             // Overall stats
-            const allTimes = processedLeads.map((l: any) => l.processing_minutes);
+            const allTimes = processedLeads.map((lead) => lead.processing_minutes);
             const overall: LeadProcessingTimeStats = {
                 fastest_minutes: Math.min(...allTimes),
                 slowest_minutes: Math.max(...allTimes),
@@ -572,7 +638,7 @@ export function useLeadProcessingTime(pipelineId?: string, dateRange?: Dashboard
 
             // Per-employee stats
             const employeeMap: Record<string, { name: string; times: number[] }> = {};
-            processedLeads.forEach((lead: any) => {
+            processedLeads.forEach((lead) => {
                 const empId = lead.employee_id;
                 const empName = lead.employee?.name || "Noma'lum";
                 if (!employeeMap[empId]) {

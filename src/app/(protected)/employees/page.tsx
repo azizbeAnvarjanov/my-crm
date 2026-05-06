@@ -55,7 +55,7 @@ interface Employee {
 
 // All available pages with their labels
 const ALL_PAGES = [
-    { path: "/", label: "Asosiy sahifa", category: "Asosiy" },
+    { path: "/dashboard", label: "Asosiy sahifa", category: "Asosiy" },
     { path: "/profile", label: "Mening profilim", category: "Asosiy" },
     { path: "/pipelines", label: "Pipelines", category: "CRM" },
     { path: "/notes", label: "Mening eslatmalarim", category: "CRM" },

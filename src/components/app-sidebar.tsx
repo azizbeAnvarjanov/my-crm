@@ -12,8 +12,6 @@ import {
     Settings,
     Users,
     FileText,
-    UserPlus,
-    BarChart3,
     PhoneCall,
     ChevronLeft,
     ChevronRight,
@@ -92,7 +90,7 @@ interface AuthUser {
 // Navigation items - grouped by category
 const navItems: NavItem[] = [
     // Asosiy
-    { title: "Asosiy sahifa", href: "/", icon: LayoutDashboard, category: "asosiy" },
+    { title: "Asosiy sahifa", href: "/dashboard", icon: LayoutDashboard, category: "asosiy" },
 
     // CRM
     { title: "Voronkalar", href: "/pipelines", icon: GitBranch, category: "crm" },
@@ -101,7 +99,6 @@ const navItems: NavItem[] = [
     { title: "Formalar", href: "/forms", icon: FileText, category: "crm" },
 
     // Analitika
-    { title: "Dashboard", href: "/dashboard", icon: BarChart3, category: "analitika" },
     { title: "Qo'ng'iroqlar", href: "/calls", icon: PhoneCall, category: "analitika" },
 
     // Sozlamalar
@@ -169,7 +166,7 @@ function SidebarToggleButton() {
     );
 }
 
-function NavItemComponent({
+const NavItemComponent = React.memo(function NavItemComponent({
     item,
     isActive,
 }: {
@@ -217,9 +214,9 @@ function NavItemComponent({
             </TooltipProvider>
         </SidebarMenuItem>
     );
-}
+});
 
-function ThemeToggle() {
+const ThemeToggle = React.memo(function ThemeToggle() {
     const { theme, setTheme } = useTheme();
 
     return (
@@ -245,10 +242,12 @@ function ThemeToggle() {
             </Tooltip>
         </TooltipProvider>
     );
-}
+});
 
-function AppSidebarContent({
+const AppSidebarContent = React.memo(function AppSidebarContent({
     user,
+    employee,
+    employeeLoading,
     branches,
     selectedBranch,
     setSelectedBranch,
@@ -256,6 +255,8 @@ function AppSidebarContent({
     onAddBranch,
 }: {
     user: AuthUser | null;
+    employee: Awaited<ReturnType<typeof useEmployee>>["data"];
+    employeeLoading: boolean;
     branches: Branch[];
     selectedBranch: Branch | null;
     setSelectedBranch: (branch: Branch) => void;
@@ -264,10 +265,9 @@ function AppSidebarContent({
 }) {
     const pathname = usePathname();
     const router = useRouter();
-    const supabase = createClient();
+    const [supabase] = React.useState(() => createClient());
     const { state } = useSidebar();
     const isExpanded = state === "expanded";
-    const { data: employee, isLoading: employeeLoading } = useEmployee();
 
     // New branch dialog state
     const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false);
@@ -424,7 +424,7 @@ function AppSidebarContent({
                                     className="text-primary focus:bg-primary/10 focus:text-primary"
                                 >
                                     <Plus className="mr-2 h-4 w-4" />
-                                    Yangi filial qo'shish
+                                    Yangi filial qo&apos;shish
                                 </DropdownMenuItem>
                             </DropdownMenuContent>
                         </DropdownMenu>
@@ -555,9 +555,9 @@ function AppSidebarContent({
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
                 <DialogContent className="bg-card border-border">
                     <DialogHeader>
-                        <DialogTitle className="text-card-foreground">Yangi filial qo'shish</DialogTitle>
+                        <DialogTitle className="text-card-foreground">Yangi filial qo&apos;shish</DialogTitle>
                         <DialogDescription className="text-muted-foreground">
-                            Yangi filial ma'lumotlarini kiriting
+                            Yangi filial ma&apos;lumotlarini kiriting
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
@@ -589,12 +589,12 @@ function AppSidebarContent({
                             {creating ? (
                                 <>
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Qo'shilmoqda...
+                                    Qo&apos;shilmoqda...
                                 </>
                             ) : (
                                 <>
                                     <Plus className="mr-2 h-4 w-4" />
-                                    Qo'shish
+                                    Qo&apos;shish
                                 </>
                             )}
                         </Button>
@@ -603,7 +603,7 @@ function AppSidebarContent({
             </Dialog>
         </>
     );
-}
+});
 
 export function AppSidebar({
     children,
@@ -615,8 +615,9 @@ export function AppSidebar({
     const [branches, setBranches] = React.useState<Branch[]>([]);
     const [selectedBranch, setSelectedBranch] = React.useState<Branch | null>(null);
     const [loading, setLoading] = React.useState(true);
-    const supabase = createClient();
+    const [supabase] = React.useState(() => createClient());
     const { data: employee, isLoading: employeeLoading } = useEmployee();
+    const initializedRef = React.useRef(false);
 
     const isAdmin = employee?.role === "super-admin";
 
@@ -640,11 +641,17 @@ export function AppSidebar({
         return [];
     }, [supabase]);
 
+    const refreshBranches = React.useCallback(async () => {
+        await fetchBranches();
+    }, [fetchBranches]);
+
     // Initialize branches and selected branch
     React.useEffect(() => {
         const init = async () => {
             // Wait for employee data to load
-            if (employeeLoading) return;
+            if (employeeLoading || initializedRef.current) return;
+
+            initializedRef.current = true;
 
             if (isAdmin) {
                 // Super-admin: Fetch all branches and allow selection
@@ -674,24 +681,29 @@ export function AppSidebar({
         }
     }, [selectedBranch, isAdmin]);
 
-    const addBranch = (branch: Branch) => {
+    const addBranch = React.useCallback((branch: Branch) => {
         setBranches((prev) => [...prev, branch].sort((a, b) => a.name.localeCompare(b.name)));
-    };
+    }, []);
+
+    const branchContextValue = React.useMemo(
+        () => ({
+            selectedBranch,
+            setSelectedBranch,
+            branches,
+            loading,
+            refreshBranches,
+            addBranch,
+        }),
+        [selectedBranch, branches, loading, refreshBranches, addBranch],
+    );
 
     return (
-        <BranchContext.Provider
-            value={{
-                selectedBranch,
-                setSelectedBranch,
-                branches,
-                loading,
-                refreshBranches: async () => { await fetchBranches(); },
-                addBranch,
-            }}
-        >
+        <BranchContext.Provider value={branchContextValue}>
             <SidebarProvider>
                 <AppSidebarContent
                     user={user}
+                    employee={employee}
+                    employeeLoading={employeeLoading}
                     branches={branches}
                     selectedBranch={selectedBranch}
                     setSelectedBranch={setSelectedBranch}

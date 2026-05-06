@@ -604,8 +604,24 @@ export function useLeadProcessingTime(pipelineId?: string, dateRange?: Dashboard
             if (error) throw error;
             if (!data?.length) return { overall: null, employees: [] };
 
+            // Supabase relation may come back as an array even for a single employee relation.
+            const typedData: LeadProcessingLead[] = (data ?? []).map((lead) => {
+                const employeeRecord = Array.isArray(lead.employee)
+                    ? lead.employee[0] ?? null
+                    : lead.employee ?? null;
+
+                return {
+                    created_at: lead.created_at,
+                    updated_at: lead.updated_at,
+                    employee_id: lead.employee_id,
+                    stage_id: lead.stage_id,
+                    employee: employeeRecord
+                        ? { name: employeeRecord.name ?? null }
+                        : null,
+                };
+            });
+
             // Ignore qilingan stage'lardagi lidlarni filter qilamiz
-            const typedData = (data ?? []) as LeadProcessingLead[];
             const filteredData = excludedStageIds && excludedStageIds.length > 0
                 ? typedData.filter((lead) => !excludedStageIds.includes(lead.stage_id))
                 : typedData;

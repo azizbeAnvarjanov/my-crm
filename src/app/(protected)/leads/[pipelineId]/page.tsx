@@ -36,8 +36,6 @@ import {
     X,
     Check,
     Users,
-    ChevronLeft,
-    ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,6 +87,14 @@ const STAGE_COLORS = [
 ];
 
 const UZBEK_PHONE_PREFIX = "+998";
+const MINI_SCROLLBAR_TRACK_WIDTH = 208;
+const MINI_SCROLLBAR_MIN_THUMB_WIDTH = 44;
+const MINI_SCROLLBAR_EDGE_OFFSET = 6;
+const MINI_SCROLLBAR_USABLE_WIDTH = MINI_SCROLLBAR_TRACK_WIDTH - MINI_SCROLLBAR_EDGE_OFFSET * 2;
+
+function clamp(value: number, min: number, max: number) {
+    return Math.min(Math.max(value, min), max);
+}
 
 function formatUzbekPhone(value: string) {
     let digits = value.replace(/\D/g, "");
@@ -340,7 +346,7 @@ function StageColumn({
     return (
         <div
             ref={setNodeRef}
-            className={`flex-shrink-0 w-80 bg-accent/30 rounded-xl flex flex-col max-h-[calc(100vh-200px)] transition-all ${isOver ? "ring-2 ring-primary bg-primary/5" : ""
+            className={`flex-shrink-0 w-80 bg-accent/30 rounded-xl flex flex-col transition-all ${isOver ? "ring-2 ring-primary bg-primary/5" : ""
                 }`}
         >
             {/* Stage Header */}
@@ -428,7 +434,7 @@ function StageColumn({
                             <div className={`py-8 text-center border-2 border-dashed rounded-lg transition-colors ${isOver ? "border-primary bg-primary/5" : "border-transparent"
                                 }`}>
                                 <p className="text-sm text-muted-foreground">
-                                    {isOver ? "Shu yerga tashlang" : "Lidlar yo&apos;q"}
+                                    {isOver ? "Shu yerga tashlang" : "Lidlar yo'q"}
                                 </p>
                             </div>
                         )}
@@ -499,23 +505,22 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
     const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
     const [stageLeadCounts, setStageLeadCounts] = useState<Record<string, number>>({});
+    const [horizontalScrollState, setHorizontalScrollState] = useState({
+        scrollLeft: 0,
+        clientWidth: 0,
+        scrollWidth: 0,
+        maxScroll: 0,
+    });
+    const [isMiniScrollbarDragging, setIsMiniScrollbarDragging] = useState(false);
 
     // Scroll container ref for horizontal scrolling
     const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const miniScrollbarTrackRef = useRef<HTMLDivElement>(null);
     const closeLeadSheetTimeoutRef = useRef<number | null>(null);
-
-    // Scroll functions
-    const scrollLeft = () => {
-        if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollBy({ left: -400, behavior: 'smooth' });
-        }
-    };
-
-    const scrollRight = () => {
-        if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollBy({ left: 400, behavior: 'smooth' });
-        }
-    };
+    const miniScrollbarDragRef = useRef<{
+        startX: number;
+        startScrollLeft: number;
+    } | null>(null);
 
     const isAdmin = employee?.role === "super-admin";
     // For regular users, filter leads by their employee_id
@@ -535,6 +540,37 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         () => stages.reduce((sum, stage) => sum + (stageLeadCounts[stage.id] || 0), 0),
         [stageLeadCounts, stages]
     );
+    const miniScrollbarThumbWidth = useMemo(() => {
+        const { clientWidth, scrollWidth } = horizontalScrollState;
+
+        if (clientWidth <= 0 || scrollWidth <= 0) {
+            return MINI_SCROLLBAR_USABLE_WIDTH;
+        }
+
+        return clamp(
+            (clientWidth / scrollWidth) * MINI_SCROLLBAR_USABLE_WIDTH,
+            MINI_SCROLLBAR_MIN_THUMB_WIDTH,
+            MINI_SCROLLBAR_USABLE_WIDTH
+        );
+    }, [horizontalScrollState]);
+    const miniScrollbarThumbOffset = useMemo(() => {
+        const { maxScroll, scrollLeft } = horizontalScrollState;
+        const maxThumbTravel = MINI_SCROLLBAR_USABLE_WIDTH - miniScrollbarThumbWidth;
+
+        if (maxScroll <= 0 || maxThumbTravel <= 0) {
+            return 0;
+        }
+
+        return (scrollLeft / maxScroll) * maxThumbTravel;
+    }, [horizontalScrollState, miniScrollbarThumbWidth]);
+    const canUseMiniScrollbar = horizontalScrollState.maxScroll > 0;
+    const miniScrollbarSegments = useMemo(() => {
+        if (stages.length === 0) {
+            return Array.from({ length: 8 }, (_, index) => `placeholder-${index}`);
+        }
+
+        return stages.map((stage) => stage.id);
+    }, [stages]);
 
     const movingLeadId = moveLeadMutation.isPending ? moveLeadMutation.variables?.leadId || null : null;
 
@@ -545,6 +581,51 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
             }
         };
     }, []);
+
+    const updateHorizontalScrollState = useCallback(() => {
+        const container = scrollContainerRef.current;
+
+        if (!container) return;
+
+        const nextState = {
+            scrollLeft: container.scrollLeft,
+            clientWidth: container.clientWidth,
+            scrollWidth: container.scrollWidth,
+            maxScroll: Math.max(container.scrollWidth - container.clientWidth, 0),
+        };
+
+        setHorizontalScrollState((prev) => (
+            prev.scrollLeft === nextState.scrollLeft
+                && prev.clientWidth === nextState.clientWidth
+                && prev.scrollWidth === nextState.scrollWidth
+                && prev.maxScroll === nextState.maxScroll
+                ? prev
+                : nextState
+        ));
+    }, []);
+
+    useEffect(() => {
+        const container = scrollContainerRef.current;
+        if (!container) return;
+
+        const handleScroll = () => updateHorizontalScrollState();
+        const resizeObserver = new ResizeObserver(() => updateHorizontalScrollState());
+
+        container.addEventListener("scroll", handleScroll, { passive: true });
+        resizeObserver.observe(container);
+
+        const content = container.firstElementChild;
+        if (content instanceof HTMLElement) {
+            resizeObserver.observe(content);
+        }
+
+        updateHorizontalScrollState();
+
+        return () => {
+            container.removeEventListener("scroll", handleScroll);
+            resizeObserver.disconnect();
+        };
+    }, [stages.length, updateHorizontalScrollState]);
 
     const handleStageTotalCountChange = useCallback((stageId: string, totalCount: number) => {
         setStageLeadCounts((prev) => (
@@ -563,6 +644,91 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         setNewLeadPhone(formatUzbekPhone(value));
         setNewLeadErrors((prev) => (prev.phone ? { ...prev, phone: undefined } : prev));
     }, []);
+
+    const scrollBoardToRatio = useCallback((ratio: number, behavior: ScrollBehavior = "smooth") => {
+        const container = scrollContainerRef.current;
+        if (!container) return;
+
+        const maxScroll = Math.max(container.scrollWidth - container.clientWidth, 0);
+        container.scrollTo({
+            left: clamp(ratio, 0, 1) * maxScroll,
+            behavior,
+        });
+    }, []);
+
+    const handleMiniScrollbarTrackPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        if ((event.target as HTMLElement).dataset.dragThumb === "true") {
+            return;
+        }
+
+        const track = miniScrollbarTrackRef.current;
+        if (!track) return;
+
+        const trackBounds = track.getBoundingClientRect();
+        const nextThumbLeft = clamp(
+            event.clientX - trackBounds.left - MINI_SCROLLBAR_EDGE_OFFSET - miniScrollbarThumbWidth / 2,
+            0,
+            MINI_SCROLLBAR_USABLE_WIDTH - miniScrollbarThumbWidth
+        );
+        const ratio = MINI_SCROLLBAR_USABLE_WIDTH === miniScrollbarThumbWidth
+            ? 0
+            : nextThumbLeft / (MINI_SCROLLBAR_USABLE_WIDTH - miniScrollbarThumbWidth);
+
+        scrollBoardToRatio(ratio);
+    }, [miniScrollbarThumbWidth, scrollBoardToRatio]);
+
+    const stopMiniScrollbarDragging = useCallback(() => {
+        miniScrollbarDragRef.current = null;
+        setIsMiniScrollbarDragging(false);
+    }, []);
+
+    useEffect(() => {
+        if (!isMiniScrollbarDragging) return;
+
+        const handlePointerMove = (event: PointerEvent) => {
+            const container = scrollContainerRef.current;
+            const dragState = miniScrollbarDragRef.current;
+            const maxThumbTravel = MINI_SCROLLBAR_USABLE_WIDTH - miniScrollbarThumbWidth;
+
+            if (!container || !dragState || horizontalScrollState.maxScroll <= 0 || maxThumbTravel <= 0) {
+                return;
+            }
+
+            const deltaX = event.clientX - dragState.startX;
+            const nextScrollLeft = clamp(
+                dragState.startScrollLeft + (deltaX / maxThumbTravel) * horizontalScrollState.maxScroll,
+                0,
+                horizontalScrollState.maxScroll
+            );
+
+            container.scrollTo({ left: nextScrollLeft, behavior: "auto" });
+        };
+
+        const handlePointerUp = () => stopMiniScrollbarDragging();
+
+        window.addEventListener("pointermove", handlePointerMove);
+        window.addEventListener("pointerup", handlePointerUp);
+        window.addEventListener("pointercancel", handlePointerUp);
+
+        return () => {
+            window.removeEventListener("pointermove", handlePointerMove);
+            window.removeEventListener("pointerup", handlePointerUp);
+            window.removeEventListener("pointercancel", handlePointerUp);
+        };
+    }, [horizontalScrollState.maxScroll, isMiniScrollbarDragging, miniScrollbarThumbWidth, stopMiniScrollbarDragging]);
+
+    const handleMiniScrollbarThumbPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        if (!canUseMiniScrollbar) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        miniScrollbarDragRef.current = {
+            startX: event.clientX,
+            startScrollLeft: horizontalScrollState.scrollLeft,
+        };
+        setIsMiniScrollbarDragging(true);
+    }, [canUseMiniScrollbar, horizontalScrollState.scrollLeft]);
 
     // Drag handlers
     const handleDragStart = (event: DragStartEvent) => {
@@ -692,12 +858,12 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const handleDeleteStage = async (stage: Stage) => {
         const stageLeadCount = stageLeadCounts[stage.id];
         if (stageLeadCount === undefined) {
-            alert("Stage ma'lumotlari hali yuklanmoqda. Bir ozdan keyin qayta urinib ko'ring.");
+            alert("Etap ma'lumotlari hali yuklanmoqda. Bir ozdan keyin qayta urinib ko'ring.");
             return;
         }
 
         if (stageLeadCount > 0) {
-            alert("Bu stageda lidlar bor. Avval lidlarni boshqa stagega o'tkazing.");
+            alert("Bu etapda lidlar bor. Avval lidlarni boshqa etapga o'tkazing.");
             return;
         }
 
@@ -777,7 +943,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                                 {pipeline?.name || "Pipeline"}
                             </h1>
                             <p className="text-sm text-muted-foreground">
-                                {totalLeadCount} ta lid | {stages.length} ta stage
+                                {totalLeadCount} ta lid | {stages.length} ta etap
                                 {!isAdmin && " | Faqat mening lidlarim"}
                             </p>
                         </div>
@@ -808,8 +974,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         {/* Add Stage Button (Admin only) */}
                         {isAdmin && (
                             <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
-                                <Plus className="h-4 w-4 mr-2" />
-                                Stage qo&apos;shish
+                                <Plus className="h-4 w-4" />
                             </Button>
                         )}
                     </div>
@@ -826,15 +991,15 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     <div className="flex items-center justify-center h-full">
                         <div className="text-center">
                             <p className="text-lg font-medium text-foreground mb-2">
-                                Hali stage yo&apos;q
+                                Hali etap yo&apos;q
                             </p>
                             <p className="text-muted-foreground mb-4">
-                                Lidlarni boshqarish uchun stage yarating
+                                Lidlarni boshqarish uchun etap yaratish
                             </p>
                             {isAdmin && (
                                 <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
                                     <Plus className="h-4 w-4 mr-2" />
-                                    Birinchi stage yaratish
+                                    Birinchi etap yaratish
                                 </Button>
                             )}
                         </div>
@@ -846,7 +1011,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         onDragStart={handleDragStart}
                         onDragEnd={handleDragEnd}
                     >
-                        <div className="flex gap-4 h-full pb-4">
+                        <div className="flex gap-3 h-full pb-4">
                             {stages.map((stage) => (
                                 <StageColumn
                                     key={stage.id}
@@ -873,23 +1038,34 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                 )}
             </div>
 
-            {/* Horizontal Scroll Buttons */}
+            {/* Mini Horizontal Scrollbar */}
             {stages.length > 0 && (
-                <div className="fixed bottom-6 right-6 flex gap-2 z-50">
-                    <Button
-                        onClick={scrollLeft}
-                        size="icon"
-                        className="h-12 w-12 rounded-full shadow-lg bg-primary hover:bg-primary/90"
+                <div className="fixed bottom-6 right-6 z-50">
+                    <div
+                        ref={miniScrollbarTrackRef}
+                        onPointerDown={handleMiniScrollbarTrackPointerDown}
+                        className={`relative h-12 w-52 overflow-hidden rounded-lg border border-green-400/40 bg-[#1d1d1d] px-1.5 py-2 transition-colors ${canUseMiniScrollbar ? "cursor-pointer" : "cursor-default"
+                            }`}
                     >
-                        <ChevronLeft className="h-6 w-6" />
-                    </Button>
-                    <Button
-                        onClick={scrollRight}
-                        size="icon"
-                        className="h-12 w-12 rounded-full shadow-lg bg-primary hover:bg-primary/90"
-                    >
-                        <ChevronRight className="h-6 w-6" />
-                    </Button>
+                        <div className="pointer-events-none absolute inset-[6px] flex gap-1">
+                            {miniScrollbarSegments.map((segmentId, index) => (
+                                <div
+                                    key={`${segmentId}-${index}`}
+                                    className="flex-1 rounded-[4px] bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                                />
+                            ))}
+                        </div>
+                        <div
+                            data-drag-thumb="true"
+                            onPointerDown={handleMiniScrollbarThumbPointerDown}
+                            className={`absolute inset-y-1.5 left-1.5 border rounded border-white/5 bg-green-300/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_6px_14px_rgba(15,23,42,0.3)] transition-[background-color,opacity] ${canUseMiniScrollbar ? "cursor-grab active:cursor-grabbing" : "opacity-50"
+                                } ${isMiniScrollbarDragging ? "bg-green-300/50" : ""}`}
+                            style={{
+                                width: miniScrollbarThumbWidth,
+                                transform: `translateX(${miniScrollbarThumbOffset}px)`,
+                            }}
+                        />
+                    </div>
                 </div>
             )}
 
@@ -897,15 +1073,15 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
             <Dialog open={isAddStageOpen} onOpenChange={setIsAddStageOpen}>
                 <DialogContent className="bg-card border-border">
                     <DialogHeader>
-                        <DialogTitle>Yangi stage qo&apos;shish</DialogTitle>
+                        <DialogTitle>Yangi etape qo&apos;shish</DialogTitle>
                         <DialogDescription>
-                            Kanban taxtasi uchun yangi stage yarating
+                            Kanban taxtasi uchun yangi etap yaratish
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                         <div className="space-y-2">
                             <label className="text-sm font-medium">
-                                Stage nomi <span className="text-destructive">*</span>
+                                Etap nomi <span className="text-destructive">*</span>
                             </label>
                             <Input
                                 placeholder="Masalan: Yangi, Jarayonda, Yakunlangan"
@@ -958,14 +1134,14 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
             <Dialog open={!!editingStage} onOpenChange={() => setEditingStage(null)}>
                 <DialogContent className="bg-card border-border">
                     <DialogHeader>
-                        <DialogTitle>Stage tahrirlash</DialogTitle>
-                        <DialogDescription>Stage nomini va rangini o&apos;zgartiring</DialogDescription>
+                        <DialogTitle>Etap tahrirlash</DialogTitle>
+                        <DialogDescription>Etap nomini va rangini o&apos;zgartiring</DialogDescription>
                     </DialogHeader>
                     {editingStage && (
                         <div className="space-y-4 py-4">
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">
-                                    Stage nomi <span className="text-destructive">*</span>
+                                    Etap nomi <span className="text-destructive">*</span>
                                 </label>
                                 <Input
                                     value={editingStage.name}
@@ -1024,7 +1200,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         <DialogTitle>Yangi lid yaratish</DialogTitle>
                         <DialogDescription>
                             {creatingLeadStage
-                                ? `${creatingLeadStage.name} stage uchun yangi lid qo'shing`
+                                ? `${creatingLeadStage.name} etap uchun yangi lid qo'shing`
                                 : "Yangi lid ma'lumotlarini kiriting"}
                         </DialogDescription>
                     </DialogHeader>

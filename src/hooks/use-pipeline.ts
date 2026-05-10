@@ -120,11 +120,27 @@ export function useStages(pipelineId: string) {
             const { data, error } = await supabase
                 .from("stages")
                 .select("*")
-                .eq("pipeline_id", pipelineId)
-                .order("id", { ascending: true });
+                .eq("pipeline_id", pipelineId);
 
             if (error) throw error;
-            return data as Stage[];
+
+            return ((data || []) as Stage[]).sort((a, b) => {
+                const aOrder = typeof a.order_index === "number" ? a.order_index : Number.MAX_SAFE_INTEGER;
+                const bOrder = typeof b.order_index === "number" ? b.order_index : Number.MAX_SAFE_INTEGER;
+
+                if (aOrder !== bOrder) {
+                    return aOrder - bOrder;
+                }
+
+                const aCreatedAt = a.created_at ? new Date(a.created_at).getTime() : 0;
+                const bCreatedAt = b.created_at ? new Date(b.created_at).getTime() : 0;
+
+                if (aCreatedAt !== bCreatedAt) {
+                    return aCreatedAt - bCreatedAt;
+                }
+
+                return a.id.localeCompare(b.id);
+            });
         },
         enabled: !!pipelineId,
     });
@@ -241,12 +257,20 @@ export interface StageLeadsResult {
     totalCount: number;
 }
 
+const DEFAULT_STAGE_LEADS_LIMIT = 20;
+
+function normalizeLeadSearch(searchQuery?: string) {
+    return searchQuery?.trim().toLowerCase() || "";
+}
+
 export const stageLeadKeys = {
     base: ["stageLeads"] as const,
-    byStage: (stageId: string, employeeId?: string | null, searchQuery?: string) =>
-        [...stageLeadKeys.base, stageId, employeeId || "all", searchQuery || ""] as const,
-    page: (stageId: string, page: number, employeeId?: string | null, searchQuery?: string) =>
-        [...stageLeadKeys.byStage(stageId, employeeId, searchQuery), "page", page] as const,
+    byStage: (
+        pipelineId: string,
+        stageId: string,
+        employeeId?: string | null,
+        searchQuery?: string
+    ) => [...stageLeadKeys.base, pipelineId, stageId, employeeId || "all", normalizeLeadSearch(searchQuery)] as const,
 };
 
 export function useStageLeads({
@@ -254,38 +278,19 @@ export function useStageLeads({
     pipelineId,
     employeeId,
     searchQuery,
-    limit = 20,
+    limit = DEFAULT_STAGE_LEADS_LIMIT,
 }: UseStageLeadsOptions) {
     return useQuery({
-        queryKey: stageLeadKeys.byStage(stageId, employeeId, searchQuery),
+        queryKey: stageLeadKeys.byStage(pipelineId, stageId, employeeId, searchQuery),
         queryFn: async () => {
             const supabase = createClient();
-
-            // First, get total count
-            let countQuery = supabase
-                .from("leads")
-                .select("id", { count: "exact", head: true })
-                .eq("stage_id", stageId)
-                .eq("pipeline_id", pipelineId);
-
-            if (employeeId) {
-                countQuery = countQuery.eq("employee_id", employeeId);
-            }
-
-            if (searchQuery && searchQuery.trim()) {
-                const search = searchQuery.trim().toLowerCase();
-                countQuery = countQuery.or(`name.ilike.%${search}%,phone.ilike.%${search}%,phone_2.ilike.%${search}%`);
-            }
-
-            const { count } = await countQuery;
-
-            // Then get first page of leads
+            const normalizedSearch = normalizeLeadSearch(searchQuery);
             let query = supabase
                 .from("leads")
                 .select(`
                     *,
                     employee:xodimlar(id, name)
-                `)
+                `, { count: "exact" })
                 .eq("stage_id", stageId)
                 .eq("pipeline_id", pipelineId)
                 .order("updated_at", { ascending: true }) // Oldest updated first
@@ -295,17 +300,18 @@ export function useStageLeads({
                 query = query.eq("employee_id", employeeId);
             }
 
-            if (searchQuery && searchQuery.trim()) {
-                const search = searchQuery.trim().toLowerCase();
-                query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%,phone_2.ilike.%${search}%`);
+            if (normalizedSearch) {
+                query = query.or(`name.ilike.%${normalizedSearch}%,phone.ilike.%${normalizedSearch}%,phone_2.ilike.%${normalizedSearch}%`);
             }
 
-            const { data, error } = await query;
+            const { data, error, count } = await query;
             if (error) throw error;
 
+            const leads = (data || []) as Lead[];
+
             return {
-                leads: data as Lead[],
-                hasMore: (count || 0) > limit,
+                leads,
+                hasMore: (count || 0) > leads.length,
                 totalCount: count || 0,
             } as StageLeadsResult;
         },
@@ -324,9 +330,10 @@ export function useLoadMoreStageLeads() {
             employeeId,
             searchQuery,
             offset,
-            limit = 20,
+            limit = DEFAULT_STAGE_LEADS_LIMIT,
         }: UseStageLeadsOptions & { offset: number }) => {
             const supabase = createClient();
+            const normalizedSearch = normalizeLeadSearch(searchQuery);
 
             let query = supabase
                 .from("leads")
@@ -343,9 +350,8 @@ export function useLoadMoreStageLeads() {
                 query = query.eq("employee_id", employeeId);
             }
 
-            if (searchQuery && searchQuery.trim()) {
-                const search = searchQuery.trim().toLowerCase();
-                query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%,phone_2.ilike.%${search}%`);
+            if (normalizedSearch) {
+                query = query.or(`name.ilike.%${normalizedSearch}%,phone.ilike.%${normalizedSearch}%,phone_2.ilike.%${normalizedSearch}%`);
             }
 
             const { data, error } = await query;
@@ -362,15 +368,16 @@ export function useLoadMoreStageLeads() {
         onSuccess: (data) => {
             // Update the existing query data by appending new leads
             queryClient.setQueryData<StageLeadsResult>(
-                stageLeadKeys.byStage(data.stageId, data.employeeId, data.searchQuery),
+                stageLeadKeys.byStage(data.pipelineId, data.stageId, data.employeeId, data.searchQuery),
                 (old) => {
                     if (!old) return old;
                     const existingIds = new Set(old.leads.map((l) => l.id));
                     const newLeads = data.leads.filter((l) => !existingIds.has(l.id));
+                    const leads = [...old.leads, ...newLeads];
                     return {
                         ...old,
-                        leads: [...old.leads, ...newLeads],
-                        hasMore: data.leads.length >= data.limit,
+                        leads,
+                        hasMore: leads.length < old.totalCount,
                     };
                 }
             );
@@ -395,6 +402,7 @@ export function useCreateLead() {
         },
         onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: leadKeys.byPipeline(data.pipeline_id) });
+            queryClient.invalidateQueries({ queryKey: stageLeadKeys.base });
         },
     });
 }
@@ -515,8 +523,8 @@ export function useMoveLead() {
             const previousLeads = queryClient.getQueryData<Lead[]>(leadKeys.byPipeline(pipelineId));
 
             // Get keys for source and destination stages
-            const sourceKey = stageLeadKeys.byStage(oldStageId, employeeId, searchQuery);
-            const destKey = stageLeadKeys.byStage(newStageId, employeeId, searchQuery);
+            const sourceKey = stageLeadKeys.byStage(pipelineId, oldStageId, employeeId, searchQuery);
+            const destKey = stageLeadKeys.byStage(pipelineId, newStageId, employeeId, searchQuery);
 
             const previousSourceData = queryClient.getQueryData<StageLeadsResult>(sourceKey);
             const previousDestData = queryClient.getQueryData<StageLeadsResult>(destKey);
@@ -532,7 +540,7 @@ export function useMoveLead() {
                 return {
                     ...old,
                     leads: old.leads.filter(l => l.id !== leadId),
-                    totalCount: Math.max(0, old.totalCount - 1)
+                    totalCount: Math.max(0, old.totalCount - 1),
                 };
             });
 
@@ -550,13 +558,13 @@ export function useMoveLead() {
                     if (!old) return {
                         leads: [updatedLead],
                         hasMore: false,
-                        totalCount: 1
+                        totalCount: 1,
                     };
 
                     return {
                         ...old,
-                        leads: [updatedLead, ...old.leads],
-                        totalCount: old.totalCount + 1
+                        leads: [...old.leads, updatedLead],
+                        totalCount: old.totalCount + 1,
                     };
                 });
             }

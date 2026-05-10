@@ -14,7 +14,6 @@ import {
     useDroppable,
     DragStartEvent,
     DragEndEvent,
-    DragOverEvent,
 } from "@dnd-kit/core";
 import {
     SortableContext,
@@ -64,6 +63,7 @@ import {
     useStages,
     useStageLeads,
     useLoadMoreStageLeads,
+    useCreateLead,
     useCreateStage,
     useUpdateStage,
     useDeleteStage,
@@ -71,9 +71,57 @@ import {
     useUpdateLead,
     Stage,
     Lead,
-    StageLeadsResult,
 } from "@/hooks/use-pipeline";
 import { LeadSheet } from "@/components/lead-sheet";
+
+const DEFAULT_STAGE_COLOR = "#6366f1";
+const STAGE_COLORS = [
+    "#6366f1",
+    "#8b5cf6",
+    "#ec4899",
+    "#ef4444",
+    "#f97316",
+    "#eab308",
+    "#22c55e",
+    "#14b8a6",
+    "#3b82f6",
+    "#6b7280",
+];
+
+const UZBEK_PHONE_PREFIX = "+998";
+
+function formatUzbekPhone(value: string) {
+    let digits = value.replace(/\D/g, "");
+
+    if (digits.startsWith("998")) {
+        digits = digits.slice(3);
+    }
+
+    digits = digits.slice(0, 9);
+
+    const parts = [
+        digits.slice(0, 2),
+        digits.slice(2, 5),
+        digits.slice(5, 7),
+        digits.slice(7, 9),
+    ].filter(Boolean);
+
+    return parts.length > 0 ? `${UZBEK_PHONE_PREFIX} ${parts.join(" ")}` : UZBEK_PHONE_PREFIX;
+}
+
+function getUzbekPhoneDigits(value: string) {
+    const digits = value.replace(/\D/g, "");
+    const normalizedDigits = digits.startsWith("998") ? digits.slice(3) : digits;
+    return normalizedDigits.slice(0, 9);
+}
+
+function isValidUzbekPhone(value: string) {
+    return getUzbekPhoneDigits(value).length === 9;
+}
+
+function getStoredUzbekPhone(value: string) {
+    return `${UZBEK_PHONE_PREFIX}${getUzbekPhoneDigits(value)}`;
+}
 
 // Helper function to get time ago
 function getTimeAgo(dateString: string): string {
@@ -205,24 +253,24 @@ function StageColumn({
     employeeId,
     searchQuery,
     isAdmin,
+    onCreateLead,
     onEditStage,
     onDeleteStage,
     onLeadClick,
     movingLeadId,
-    allLeads,
-    setAllLeads,
+    onTotalCountChange,
 }: {
     stage: Stage;
     pipelineId: string;
     employeeId?: string | null;
     searchQuery?: string;
     isAdmin: boolean;
+    onCreateLead: (stage: Stage) => void;
     onEditStage: (stage: Stage) => void;
     onDeleteStage: (stage: Stage) => void;
     onLeadClick: (lead: Lead) => void;
     movingLeadId: string | null;
-    allLeads: Lead[];
-    setAllLeads: React.Dispatch<React.SetStateAction<Lead[]>>;
+    onTotalCountChange?: (stageId: string, totalCount: number) => void;
 }) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [scrollProgress, setScrollProgress] = useState(0);
@@ -241,15 +289,21 @@ function StageColumn({
     const hasMore = stageData?.hasMore || false;
     const totalCount = stageData?.totalCount || 0;
 
-    // Update allLeads when stageData changes
     useEffect(() => {
-        if (stageData?.leads) {
-            setAllLeads((prev) => {
-                const otherLeads = prev.filter((l) => l.stage_id !== stage.id);
-                return [...otherLeads, ...stageData.leads];
-            });
-        }
-    }, [stageData, stage.id, setAllLeads]);
+        onTotalCountChange?.(stage.id, totalCount);
+    }, [onTotalCountChange, stage.id, totalCount]);
+
+    const handleLoadMore = useCallback(() => {
+        if (!hasMore || loadMoreMutation.isPending) return;
+
+        loadMoreMutation.mutate({
+            stageId: stage.id,
+            pipelineId,
+            employeeId,
+            searchQuery,
+            offset: leads.length,
+        });
+    }, [employeeId, hasMore, leads.length, loadMoreMutation, pipelineId, searchQuery, stage.id]);
 
     // Handle scroll for infinite loading and progress tracking
     const handleScroll = useCallback(() => {
@@ -272,16 +326,10 @@ function StageColumn({
         // Use a more robust check for bottom
         const isNearBottom = scrollTop + clientHeight >= scrollHeight - 150;
 
-        if (isNearBottom && !loadMoreMutation.isPending) {
-            loadMoreMutation.mutate({
-                stageId: stage.id,
-                pipelineId,
-                employeeId,
-                searchQuery,
-                offset: leads.length,
-            });
+        if (isNearBottom) {
+            handleLoadMore();
         }
-    }, [hasMore, loadMoreMutation, stage.id, pipelineId, employeeId, searchQuery, leads.length]);
+    }, [handleLoadMore, hasMore, loadMoreMutation.isPending]);
 
     // Use droppable for stage (drop zone for leads)
     const { setNodeRef, isOver } = useDroppable({
@@ -299,7 +347,7 @@ function StageColumn({
             <div className="sticky top-0 z-10 bg-accent/50 backdrop-blur-sm rounded-t-xl">
                 <div
                     className="p-3 border-b border-border flex items-center justify-between"
-                    style={{ borderLeft: `4px solid ${stage.color || "#6366f1"}` }}
+                    style={{ borderLeft: `4px solid ${stage.color || DEFAULT_STAGE_COLOR}` }}
                 >
                     <div className="flex items-center gap-2">
                         <h3 className="font-medium text-foreground">{stage.name}</h3>
@@ -307,29 +355,37 @@ function StageColumn({
                             {totalCount}
                         </Badge>
                     </div>
-                    {isAdmin && (
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-7 w-7">
-                                    <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="bg-popover border-border">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7">
+                                <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-popover border-border">
+                            {isAdmin && (
                                 <DropdownMenuItem onClick={() => onEditStage(stage)}>
                                     <Edit2 className="h-4 w-4 mr-2" />
                                     Tahrirlash
                                 </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                    onClick={() => onDeleteStage(stage)}
-                                    className="text-destructive focus:text-destructive"
-                                >
-                                    <Trash2 className="h-4 w-4 mr-2" />
-                                    O'chirish
-                                </DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                    )}
+                            )}
+                            <DropdownMenuItem onClick={() => onCreateLead(stage)}>
+                                <Plus className="h-4 w-4 mr-2" />
+                                Yangi lid
+                            </DropdownMenuItem>
+                            {isAdmin && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                        onClick={() => onDeleteStage(stage)}
+                                        className="text-destructive focus:text-destructive"
+                                    >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        O&apos;chirish
+                                    </DropdownMenuItem>
+                                </>
+                            )}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
                 {/* Scroll Progress Bar */}
                 {scrollProgress > 0 && (
@@ -338,7 +394,7 @@ function StageColumn({
                             className="h-full bg-primary transition-all duration-150"
                             style={{
                                 width: `${scrollProgress}%`,
-                                backgroundColor: stage.color || "#6366f1",
+                                backgroundColor: stage.color || DEFAULT_STAGE_COLOR,
                             }}
                         />
                     </div>
@@ -372,7 +428,7 @@ function StageColumn({
                             <div className={`py-8 text-center border-2 border-dashed rounded-lg transition-colors ${isOver ? "border-primary bg-primary/5" : "border-transparent"
                                 }`}>
                                 <p className="text-sm text-muted-foreground">
-                                    {isOver ? "Shu yerga tashlang" : "Lidlar yo'q"}
+                                    {isOver ? "Shu yerga tashlang" : "Lidlar yo&apos;q"}
                                 </p>
                             </div>
                         )}
@@ -390,15 +446,7 @@ function StageColumn({
                                     variant="ghost"
                                     size="sm"
                                     className="w-full text-muted-foreground hover:text-primary transition-colors text-xs gap-2"
-                                    onClick={() => {
-                                        loadMoreMutation.mutate({
-                                            stageId: stage.id,
-                                            pipelineId,
-                                            employeeId,
-                                            searchQuery,
-                                            offset: leads.length,
-                                        });
-                                    }}
+                                    onClick={handleLoadMore}
                                 >
                                     <Plus className="h-3 w-3" />
                                     Yuklash ({leads.length} / {totalCount})
@@ -417,9 +465,9 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const { pipelineId } = use(params);
     const router = useRouter();
 
-    const { data: employee, isLoading: employeeLoading } = useEmployee();
-    const { data: pipeline, isLoading: pipelineLoading } = usePipeline(pipelineId);
-    const { data: stages = [], isLoading: stagesLoading } = useStages(pipelineId);
+    const { data: employee, isLoading: employeeLoading, error: employeeError } = useEmployee();
+    const { data: pipeline, isLoading: pipelineLoading, error: pipelineError } = usePipeline(pipelineId);
+    const { data: stages = [], isLoading: stagesLoading, error: stagesError } = useStages(pipelineId);
 
     const [searchQuery, setSearchQuery] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -433,24 +481,28 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     }, [searchQuery]);
 
     const createStageMutation = useCreateStage();
+    const createLeadMutation = useCreateLead();
     const updateStageMutation = useUpdateStage();
     const deleteStageMutation = useDeleteStage();
     const moveLeadMutation = useMoveLead();
     const updateLeadMutation = useUpdateLead();
 
-    const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
+    const [activeLead, setActiveLead] = useState<Lead | null>(null);
     const [isAddStageOpen, setIsAddStageOpen] = useState(false);
     const [newStageName, setNewStageName] = useState("");
-    const [newStageColor, setNewStageColor] = useState("#6366f1");
+    const [newStageColor, setNewStageColor] = useState(DEFAULT_STAGE_COLOR);
     const [editingStage, setEditingStage] = useState<Stage | null>(null);
+    const [creatingLeadStage, setCreatingLeadStage] = useState<Stage | null>(null);
+    const [newLeadName, setNewLeadName] = useState("");
+    const [newLeadPhone, setNewLeadPhone] = useState(UZBEK_PHONE_PREFIX);
+    const [newLeadErrors, setNewLeadErrors] = useState<{ name?: string; phone?: string }>({});
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
     const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
-
-    // All leads from all stages (for drag and drop)
-    const [allLeads, setAllLeads] = useState<Lead[]>([]);
+    const [stageLeadCounts, setStageLeadCounts] = useState<Record<string, number>>({});
 
     // Scroll container ref for horizontal scrolling
     const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const closeLeadSheetTimeoutRef = useRef<number | null>(null);
 
     // Scroll functions
     const scrollLeft = () => {
@@ -468,6 +520,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const isAdmin = employee?.role === "super-admin";
     // For regular users, filter leads by their employee_id
     const employeeId = isAdmin ? null : employee?.id;
+    const leadEmployeeId = employee?.id;
 
     const sensors = useSensors(
         useSensor(PointerSensor, {
@@ -478,25 +531,48 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         useSensor(KeyboardSensor)
     );
 
-    // Find active lead for drag overlay
-    const activeLead = useMemo(() => {
-        if (!activeLeadId) return null;
-        // Search in allLeads which is aggregated from all stages
-        return allLeads.find((l) => l.id === activeLeadId) || null;
-    }, [activeLeadId, allLeads]);
+    const totalLeadCount = useMemo(
+        () => stages.reduce((sum, stage) => sum + (stageLeadCounts[stage.id] || 0), 0),
+        [stageLeadCounts, stages]
+    );
+
+    const movingLeadId = moveLeadMutation.isPending ? moveLeadMutation.variables?.leadId || null : null;
+
+    useEffect(() => {
+        return () => {
+            if (closeLeadSheetTimeoutRef.current) {
+                window.clearTimeout(closeLeadSheetTimeoutRef.current);
+            }
+        };
+    }, []);
+
+    const handleStageTotalCountChange = useCallback((stageId: string, totalCount: number) => {
+        setStageLeadCounts((prev) => (
+            prev[stageId] === totalCount ? prev : { ...prev, [stageId]: totalCount }
+        ));
+    }, []);
+
+    const resetCreateLeadDialog = useCallback(() => {
+        setCreatingLeadStage(null);
+        setNewLeadName("");
+        setNewLeadPhone(UZBEK_PHONE_PREFIX);
+        setNewLeadErrors({});
+    }, []);
+
+    const handleCreateLeadPhoneChange = useCallback((value: string) => {
+        setNewLeadPhone(formatUzbekPhone(value));
+        setNewLeadErrors((prev) => (prev.phone ? { ...prev, phone: undefined } : prev));
+    }, []);
 
     // Drag handlers
     const handleDragStart = (event: DragStartEvent) => {
-        setActiveLeadId(event.active.id as string);
-    };
-
-    const handleDragOver = (event: DragOverEvent) => {
-        // Handle drag over for visual feedback if needed
+        const lead = event.active.data.current?.lead;
+        setActiveLead(lead || null);
     };
 
     const handleDragEnd = (event: DragEndEvent) => {
         const { active, over } = event;
-        setActiveLeadId(null);
+        setActiveLead(null);
 
         if (!over) return;
 
@@ -535,18 +611,16 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
             employeeId,
             searchQuery: debouncedSearch,
         });
-
-        // Optimistic update for allLeads to reflect change immediately
-        // We set updated_at to now so it stays at the bottom (oldest first logic)
-        // or moves according to the user's sorting preference.
-        setAllLeads((prev) =>
-            prev.map((l) =>
-                l.id === activeId ? { ...l, stage_id: targetStageId!, updated_at: new Date().toISOString() } : l
-            )
-        );
     };
 
     // Stage handlers
+    const handleOpenCreateLead = (stage: Stage) => {
+        setCreatingLeadStage(stage);
+        setNewLeadName("");
+        setNewLeadPhone(UZBEK_PHONE_PREFIX);
+        setNewLeadErrors({});
+    };
+
     const handleAddStage = async () => {
         if (!newStageName.trim()) return;
 
@@ -558,8 +632,49 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         });
 
         setNewStageName("");
-        setNewStageColor("#6366f1");
+        setNewStageColor(DEFAULT_STAGE_COLOR);
         setIsAddStageOpen(false);
+    };
+
+    const handleCreateLead = async () => {
+        const trimmedName = newLeadName.trim();
+        const errors: { name?: string; phone?: string } = {};
+
+        if (!trimmedName) {
+            errors.name = "Lid ismini kiriting";
+        }
+
+        if (!isValidUzbekPhone(newLeadPhone)) {
+            errors.phone = "Telefon raqamni to'liq kiriting";
+        }
+
+        if (!creatingLeadStage) {
+            errors.name = "Stage tanlanmagan";
+        }
+
+        if (!leadEmployeeId) {
+            errors.name = "Xodim ma'lumoti topilmadi";
+        }
+
+        if (Object.keys(errors).length > 0) {
+            setNewLeadErrors(errors);
+            return;
+        }
+
+        try {
+            await createLeadMutation.mutateAsync({
+                name: trimmedName,
+                phone: getStoredUzbekPhone(newLeadPhone),
+                stage_id: creatingLeadStage!.id,
+                pipeline_id: pipelineId,
+                employee_id: leadEmployeeId,
+            });
+
+            resetCreateLeadDialog();
+        } catch (error) {
+            console.error("Error creating lead:", error);
+            alert("Yangi lid yaratib bo'lmadi");
+        }
     };
 
     const handleUpdateStage = async () => {
@@ -575,8 +690,13 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     };
 
     const handleDeleteStage = async (stage: Stage) => {
-        const stageLeads = allLeads.filter((l) => l.stage_id === stage.id);
-        if (stageLeads.length > 0) {
+        const stageLeadCount = stageLeadCounts[stage.id];
+        if (stageLeadCount === undefined) {
+            alert("Stage ma'lumotlari hali yuklanmoqda. Bir ozdan keyin qayta urinib ko'ring.");
+            return;
+        }
+
+        if (stageLeadCount > 0) {
             alert("Bu stageda lidlar bor. Avval lidlarni boshqa stagega o'tkazing.");
             return;
         }
@@ -589,13 +709,23 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
     // Lead sheet handlers
     const handleLeadClick = (lead: Lead) => {
+        if (closeLeadSheetTimeoutRef.current) {
+            window.clearTimeout(closeLeadSheetTimeoutRef.current);
+            closeLeadSheetTimeoutRef.current = null;
+        }
         setSelectedLead(lead);
         setIsLeadSheetOpen(true);
     };
 
     const handleCloseLeadSheet = () => {
         setIsLeadSheetOpen(false);
-        setTimeout(() => setSelectedLead(null), 200);
+        if (closeLeadSheetTimeoutRef.current) {
+            window.clearTimeout(closeLeadSheetTimeoutRef.current);
+        }
+        closeLeadSheetTimeoutRef.current = window.setTimeout(() => {
+            setSelectedLead(null);
+            closeLeadSheetTimeoutRef.current = null;
+        }, 200);
     };
 
     const handleUpdateLead = async (leadId: string, updates: Partial<Lead>) => {
@@ -606,24 +736,24 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         }
     };
 
-    const stageColors = [
-        "#6366f1", // Indigo
-        "#8b5cf6", // Purple
-        "#ec4899", // Pink
-        "#ef4444", // Red
-        "#f97316", // Orange
-        "#eab308", // Yellow
-        "#22c55e", // Green
-        "#14b8a6", // Teal
-        "#3b82f6", // Blue
-        "#6b7280", // Gray
-    ];
-
     // Loading state
     if (employeeLoading || pipelineLoading) {
         return (
             <div className="flex items-center justify-center min-h-screen">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+        );
+    }
+
+    if (employeeError || pipelineError || stagesError) {
+        return (
+            <div className="flex items-center justify-center min-h-screen p-6">
+                <div className="max-w-md rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-center">
+                    <p className="text-sm font-medium text-foreground">Sahifa ma&apos;lumotlarini yuklashda xato bo&apos;ldi</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                        {stagesError?.message || pipelineError?.message || employeeError?.message || "Noma&apos;lum xato"}
+                    </p>
+                </div>
             </div>
         );
     }
@@ -647,8 +777,8 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                                 {pipeline?.name || "Pipeline"}
                             </h1>
                             <p className="text-sm text-muted-foreground">
-                                {allLeads.length} ta lid • {stages.length} ta stage
-                                {!isAdmin && " • Faqat mening lidlarim"}
+                                {totalLeadCount} ta lid | {stages.length} ta stage
+                                {!isAdmin && " | Faqat mening lidlarim"}
                             </p>
                         </div>
                     </div>
@@ -679,7 +809,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         {isAdmin && (
                             <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
                                 <Plus className="h-4 w-4 mr-2" />
-                                Stage qo'shish
+                                Stage qo&apos;shish
                             </Button>
                         )}
                     </div>
@@ -696,7 +826,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     <div className="flex items-center justify-center h-full">
                         <div className="text-center">
                             <p className="text-lg font-medium text-foreground mb-2">
-                                Hali stage yo'q
+                                Hali stage yo&apos;q
                             </p>
                             <p className="text-muted-foreground mb-4">
                                 Lidlarni boshqarish uchun stage yarating
@@ -714,7 +844,6 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         sensors={sensors}
                         collisionDetection={closestCorners}
                         onDragStart={handleDragStart}
-                        onDragOver={handleDragOver}
                         onDragEnd={handleDragEnd}
                     >
                         <div className="flex gap-4 h-full pb-4">
@@ -726,12 +855,12 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                                     employeeId={employeeId}
                                     searchQuery={debouncedSearch}
                                     isAdmin={isAdmin}
+                                    onCreateLead={handleOpenCreateLead}
                                     onEditStage={setEditingStage}
                                     onDeleteStage={handleDeleteStage}
                                     onLeadClick={handleLeadClick}
-                                    movingLeadId={moveLeadMutation.isPending && moveLeadMutation.variables ? (moveLeadMutation.variables as any).leadId : null}
-                                    allLeads={allLeads}
-                                    setAllLeads={setAllLeads}
+                                    movingLeadId={movingLeadId}
+                                    onTotalCountChange={handleStageTotalCountChange}
                                 />
                             ))}
                         </div>
@@ -768,7 +897,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
             <Dialog open={isAddStageOpen} onOpenChange={setIsAddStageOpen}>
                 <DialogContent className="bg-card border-border">
                     <DialogHeader>
-                        <DialogTitle>Yangi stage qo'shish</DialogTitle>
+                        <DialogTitle>Yangi stage qo&apos;shish</DialogTitle>
                         <DialogDescription>
                             Kanban taxtasi uchun yangi stage yarating
                         </DialogDescription>
@@ -790,9 +919,10 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Rang</label>
                             <div className="flex gap-2 flex-wrap">
-                                {stageColors.map((color) => (
+                                {STAGE_COLORS.map((color) => (
                                     <button
                                         key={color}
+                                        type="button"
                                         onClick={() => setNewStageColor(color)}
                                         className={`h-8 w-8 rounded-full border-2 transition-all ${newStageColor === color
                                             ? "border-foreground scale-110"
@@ -818,7 +948,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                             ) : (
                                 <Plus className="h-4 w-4 mr-2" />
                             )}
-                            Qo'shish
+                            Qo&apos;shish
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -829,7 +959,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                 <DialogContent className="bg-card border-border">
                     <DialogHeader>
                         <DialogTitle>Stage tahrirlash</DialogTitle>
-                        <DialogDescription>Stage nomini va rangini o'zgartiring</DialogDescription>
+                        <DialogDescription>Stage nomini va rangini o&apos;zgartiring</DialogDescription>
                     </DialogHeader>
                     {editingStage && (
                         <div className="space-y-4 py-4">
@@ -847,9 +977,10 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">Rang</label>
                                 <div className="flex gap-2 flex-wrap">
-                                    {stageColors.map((color) => (
+                                    {STAGE_COLORS.map((color) => (
                                         <button
                                             key={color}
+                                            type="button"
                                             onClick={() =>
                                                 setEditingStage({ ...editingStage, color })
                                             }
@@ -886,15 +1017,90 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                 </DialogContent>
             </Dialog>
 
+            {/* Create Lead Dialog */}
+            <Dialog open={!!creatingLeadStage} onOpenChange={(open) => { if (!open) resetCreateLeadDialog(); }}>
+                <DialogContent className="bg-card border-border">
+                    <DialogHeader>
+                        <DialogTitle>Yangi lid yaratish</DialogTitle>
+                        <DialogDescription>
+                            {creatingLeadStage
+                                ? `${creatingLeadStage.name} stage uchun yangi lid qo'shing`
+                                : "Yangi lid ma'lumotlarini kiriting"}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">
+                                Lid ismi <span className="text-destructive">*</span>
+                            </label>
+                            <Input
+                                placeholder="Masalan: Ali Valiyev"
+                                value={newLeadName}
+                                onChange={(e) => {
+                                    setNewLeadName(e.target.value);
+                                    setNewLeadErrors((prev) => (prev.name ? { ...prev, name: undefined } : prev));
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                        void handleCreateLead();
+                                    }
+                                }}
+                            />
+                            {newLeadErrors.name && (
+                                <p className="text-sm text-destructive">{newLeadErrors.name}</p>
+                            )}
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">
+                                Telefon raqam <span className="text-destructive">*</span>
+                            </label>
+                            <Input
+                                placeholder="+998 90 123 45 67"
+                                value={newLeadPhone}
+                                onChange={(e) => handleCreateLeadPhoneChange(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                        void handleCreateLead();
+                                    }
+                                }}
+                                inputMode="tel"
+                            />
+                            {newLeadErrors.phone && (
+                                <p className="text-sm text-destructive">{newLeadErrors.phone}</p>
+                            )}
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={resetCreateLeadDialog}>
+                            Bekor qilish
+                        </Button>
+                        <Button
+                            onClick={() => void handleCreateLead()}
+                            disabled={createLeadMutation.isPending}
+                            className="btn-primary"
+                        >
+                            {createLeadMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            ) : (
+                                <Plus className="h-4 w-4 mr-2" />
+                            )}
+                            Yaratish
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Lead Details Sheet */}
-            <LeadSheet
-                lead={selectedLead}
-                isOpen={isLeadSheetOpen}
-                onClose={handleCloseLeadSheet}
-                stages={stages}
-                onUpdateLead={handleUpdateLead}
-                isUpdating={updateLeadMutation.isPending}
-            />
+            {selectedLead && (
+                <LeadSheet
+                    lead={selectedLead}
+                    isOpen={isLeadSheetOpen}
+                    onClose={handleCloseLeadSheet}
+                    stages={stages}
+                    onUpdateLead={handleUpdateLead}
+                    isUpdating={updateLeadMutation.isPending}
+                />
+            )}
         </div>
     );
 }

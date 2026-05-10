@@ -359,6 +359,7 @@ export function useLoadMoreStageLeads() {
 
             return {
                 leads: data as Lead[],
+                pipelineId,
                 stageId,
                 employeeId,
                 searchQuery,

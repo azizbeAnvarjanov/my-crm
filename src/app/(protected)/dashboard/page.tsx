@@ -386,265 +386,270 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Stats Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        {showStatsSkeleton ? (
-          Array.from({ length: 4 }).map((_, index) => (
-            <StatsCardSkeleton key={index} />
-          ))
-        ) : showPipelineEmptyState ? (
-          <Card className="col-span-full border-border/60">
-            <CardContent className="p-6">
-              <SectionPlaceholder
-                icon={BarChart3}
-                title="Pipeline topilmadi"
-                description="Tanlangan filialda hali pipeline yaratilmagan."
-              />
-            </CardContent>
-          </Card>
-        ) : (
-          <>
-            {/* Jami Lidlar */}
-            <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
-              <CardContent className="p-4 md:p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="p-2 rounded-lg bg-blue-500/10">
-                    <Users className="h-4 w-4 text-blue-500" />
-                  </div>
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Lidlar
-                  </span>
-                </div>
-                <div className="text-2xl md:text-3xl font-bold text-blue-500">
-                  {stats?.total_leads.toLocaleString()}
-                </div>
-                <div className="text-xs text-muted-foreground mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
-                  <div>
-                    Bugun:{" "}
-                    <span className="font-medium text-foreground">
-                      {stats?.leads_today}
-                    </span>
-                  </div>
-                  <div>
-                    Hafta:{" "}
-                    <span className="font-medium text-foreground">
-                      {stats?.leads_week}
-                    </span>
-                  </div>
-                  <div>
-                    Oy:{" "}
-                    <span className="font-medium text-foreground">
-                      {stats?.leads_month}
-                    </span>
-                  </div>
-                  <div>
-                    Yil:{" "}
-                    <span className="font-medium text-foreground">
-                      {stats?.leads_year}
-                    </span>
-                  </div>
-                </div>
-                {(stats?.unassigned_leads ?? 0) > 0 && (
-                  <div className="mt-2.5 p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-between">
-                    <span className="text-xs font-medium text-red-500">
-                      Biriktirilmagan
-                    </span>
-                    <span className="text-sm font-bold text-red-500">
-                      {stats?.unassigned_leads}
-                    </span>
-                  </div>
-                )}
+      <div className="flex w-full gap-4">
+
+        {/* Stats Cards Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-2 gap-3 md:gap-4 w-[40%]">
+          {showStatsSkeleton ? (
+            Array.from({ length: 4 }).map((_, index) => (
+              <StatsCardSkeleton key={index} />
+            ))
+          ) : showPipelineEmptyState ? (
+            <Card className="col-span-full border-border/60">
+              <CardContent className="p-6">
+                <SectionPlaceholder
+                  icon={BarChart3}
+                  title="Pipeline topilmadi"
+                  description="Tanlangan filialda hali pipeline yaratilmagan."
+                />
               </CardContent>
             </Card>
-
-            {/* Tasks */}
-            <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
-              <CardContent className="p-4 md:p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="p-2 rounded-lg bg-green-500/10">
-                    <CheckCircle2 className="h-4 w-4 text-green-500" />
-                  </div>
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Eslatmalar
-                  </span>
-                </div>
-                <div className="text-2xl md:text-3xl font-bold text-green-500">
-                  {stats?.total_tasks.toLocaleString()}
-                </div>
-                <div className="text-xs text-muted-foreground mt-2 space-y-1">
-                  <div className="flex justify-between">
-                    <span className="flex items-center gap-1">
-                      <CheckCircle2 className="h-3 w-3 text-green-500" /> Bajarilgan
-                    </span>
-                    <span className="font-medium text-foreground">
-                      {stats?.completed_tasks}
+          ) : (
+            <>
+              {/* Jami Lidlar */}
+              <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
+                <CardContent className="p-4 md:p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="p-2 rounded-lg bg-blue-500/10">
+                      <Users className="h-4 w-4 text-blue-500" />
+                    </div>
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Lidlar
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3 text-amber-500" /> Kutilmoqda
-                    </span>
-                    <span className="font-medium text-foreground">
-                      {stats?.pending_tasks}
-                    </span>
+                  <div className="text-2xl md:text-3xl font-bold text-blue-500">
+                    {stats?.total_leads.toLocaleString()}
                   </div>
-                  <div className="flex justify-between">
-                    <span className="flex items-center gap-1">
-                      <AlertTriangle className="h-3 w-3 text-red-500" /> Muddati
-                      o&apos;tgan
-                    </span>
-                    <span className="font-medium text-foreground">
-                      {stats?.overdue_tasks}
-                    </span>
+                  <div className="text-xs text-muted-foreground mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+                    <div>
+                      Bugun:{" "}
+                      <span className="font-medium text-foreground">
+                        {stats?.leads_today}
+                      </span>
+                    </div>
+                    <div>
+                      Hafta:{" "}
+                      <span className="font-medium text-foreground">
+                        {stats?.leads_week}
+                      </span>
+                    </div>
+                    <div>
+                      Oy:{" "}
+                      <span className="font-medium text-foreground">
+                        {stats?.leads_month}
+                      </span>
+                    </div>
+                    <div>
+                      Yil:{" "}
+                      <span className="font-medium text-foreground">
+                        {stats?.leads_year}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Calls */}
-            <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
-              <CardContent className="p-4 md:p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="p-2 rounded-lg bg-purple-500/10">
-                    <PhoneCall className="h-4 w-4 text-purple-500" />
-                  </div>
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Qo&apos;ng&apos;iroqlar
-                  </span>
-                </div>
-                <div className="text-2xl md:text-3xl font-bold text-purple-500">
-                  {stats?.total_calls?.toLocaleString() ?? 0}
-                </div>
-                <div className="text-xs text-muted-foreground mt-2 space-y-1">
-                  <div className="flex justify-between">
-                    <span>Bugun</span>
-                    <span className="font-medium text-foreground">
-                      {stats?.calls_today ?? 0}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Hafta</span>
-                    <span className="font-medium text-foreground">
-                      {stats?.calls_week ?? 0}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Updated Leads */}
-            <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
-              <CardContent className="p-4 md:p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="p-2 rounded-lg bg-amber-500/10">
-                    <TrendingUp className="h-4 w-4 text-amber-500" />
-                  </div>
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Yangilangan
-                  </span>
-                </div>
-                <div className="text-2xl md:text-3xl font-bold text-amber-500">
-                  {stats?.updated_today ?? 0}
-                </div>
-                <div className="text-xs text-muted-foreground mt-2 space-y-1">
-                  <div className="flex justify-between">
-                    <span>Bugun</span>
-                    <span className="font-medium text-foreground">
-                      {stats?.updated_today ?? 0}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Hafta</span>
-                    <span className="font-medium text-foreground">
-                      {stats?.updated_week ?? 0}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Oy</span>
-                    <span className="font-medium text-foreground">
-                      {stats?.updated_month ?? 0}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
-      </div>
-
-      {/* Top Callers Section */}
-      <Card className="border-border/60">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <Trophy className="h-5 w-5 text-amber-500" />
-            <CardTitle className="text-base font-semibold text-foreground">
-              Top Xodimlar (Qo&apos;ng&apos;iroqlar)
-            </CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {showTopCallersLoader ? (
-            <SectionPlaceholder
-              icon={Phone}
-              title="Qo'ng'iroqlar yuklanmoqda"
-              description="Top xodimlar ro'yxati tayyorlanmoqda."
-              loading
-            />
-          ) : topCallers && topCallers.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              {topCallers.map((caller, index) => (
-                <div
-                  key={caller.employee_id}
-                  className="relative flex flex-col items-center justify-center p-4 rounded-xl bg-card border border-border/60 hover:border-primary/30 hover:shadow-md transition-all duration-200"
-                >
-                  {/* Medal/rank badge */}
-                  <div className="absolute -top-2 -right-2 text-lg">
-                    {index === 0
-                      ? "🥇"
-                      : index === 1
-                        ? "🥈"
-                        : index === 2
-                          ? "🥉"
-                          : null}
-                  </div>
-                  <div className="text-2xl font-bold text-purple-500">
-                    {caller.call_count}
-                  </div>
-                  <div
-                    className="text-sm font-medium text-foreground text-center mt-1 w-full overflow-hidden"
-                    style={{
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                    }}
-                    title={caller.employee_name}
-                  >
-                    {caller.employee_name}
-                  </div>
-                  {index >= 3 && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      #{index + 1}
+                  {(stats?.unassigned_leads ?? 0) > 0 && (
+                    <div className="mt-2.5 p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-between">
+                      <span className="text-xs font-medium text-red-500">
+                        Biriktirilmagan
+                      </span>
+                      <span className="text-sm font-bold text-red-500">
+                        {stats?.unassigned_leads}
+                      </span>
                     </div>
                   )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <div className="p-3 rounded-full bg-muted mb-3">
-                <Phone className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-medium text-foreground">
-                Hali qo&apos;ng&apos;iroqlar mavjud emas
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Qo&apos;ng&apos;iroqlar qo&apos;shilganda bu yerda
-                ko&apos;rinadi
-              </p>
-            </div>
+                </CardContent>
+              </Card>
+
+              {/* Tasks */}
+              <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
+                <CardContent className="p-4 md:p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="p-2 rounded-lg bg-green-500/10">
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    </div>
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Eslatmalar
+                    </span>
+                  </div>
+                  <div className="text-2xl md:text-3xl font-bold text-green-500">
+                    {stats?.total_tasks.toLocaleString()}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 space-y-1">
+                    <div className="flex justify-between">
+                      <span className="flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3 text-green-500" /> Bajarilgan
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {stats?.completed_tasks}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3 text-amber-500" /> Kutilmoqda
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {stats?.pending_tasks}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3 text-red-500" /> Muddati
+                        o&apos;tgan
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {stats?.overdue_tasks}
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Calls */}
+              <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
+                <CardContent className="p-4 md:p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="p-2 rounded-lg bg-purple-500/10">
+                      <PhoneCall className="h-4 w-4 text-purple-500" />
+                    </div>
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Qo&apos;ng&apos;iroqlar
+                    </span>
+                  </div>
+                  <div className="text-2xl md:text-3xl font-bold text-purple-500">
+                    {stats?.total_calls?.toLocaleString() ?? 0}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 space-y-1">
+                    <div className="flex justify-between">
+                      <span>Bugun</span>
+                      <span className="font-medium text-foreground">
+                        {stats?.calls_today ?? 0}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Hafta</span>
+                      <span className="font-medium text-foreground">
+                        {stats?.calls_week ?? 0}
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Updated Leads */}
+              <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
+                <CardContent className="p-4 md:p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="p-2 rounded-lg bg-amber-500/10">
+                      <TrendingUp className="h-4 w-4 text-amber-500" />
+                    </div>
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Yangilangan
+                    </span>
+                  </div>
+                  <div className="text-2xl md:text-3xl font-bold text-amber-500">
+                    {stats?.updated_today ?? 0}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 space-y-1">
+                    <div className="flex justify-between">
+                      <span>Bugun</span>
+                      <span className="font-medium text-foreground">
+                        {stats?.updated_today ?? 0}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Hafta</span>
+                      <span className="font-medium text-foreground">
+                        {stats?.updated_week ?? 0}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Oy</span>
+                      <span className="font-medium text-foreground">
+                        {stats?.updated_month ?? 0}
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+
+        {/* Top Callers Section */}
+        <Card className="border-border/60 w-[60%]">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Trophy className="h-5 w-5 text-amber-500" />
+              <CardTitle className="text-base font-semibold text-foreground">
+                Top Xodimlar (Qo&apos;ng&apos;iroqlar)
+              </CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {showTopCallersLoader ? (
+              <SectionPlaceholder
+                icon={Phone}
+                title="Qo'ng'iroqlar yuklanmoqda"
+                description="Top xodimlar ro'yxati tayyorlanmoqda."
+                loading
+              />
+            ) : topCallers && topCallers.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                {topCallers.map((caller, index) => (
+                  <div
+                    key={caller.employee_id}
+                    className="relative flex flex-col items-center justify-center p-4 rounded-xl bg-card border border-border/60 hover:border-primary/30 hover:shadow-md transition-all duration-200"
+                  >
+                    {/* Medal/rank badge */}
+                    <div className="absolute -top-2 -right-2 text-lg">
+                      {index === 0
+                        ? "🥇"
+                        : index === 1
+                          ? "🥈"
+                          : index === 2
+                            ? "🥉"
+                            : null}
+                    </div>
+                    <div className="text-2xl font-bold text-purple-500">
+                      {caller.call_count}
+                    </div>
+                    <div
+                      className="text-sm font-medium text-foreground text-center mt-1 w-full overflow-hidden"
+                      style={{
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                      }}
+                      title={caller.employee_name}
+                    >
+                      {caller.employee_name}
+                    </div>
+                    {index >= 3 && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        #{index + 1}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <div className="p-3 rounded-full bg-muted mb-3">
+                  <Phone className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium text-foreground">
+                  Hali qo&apos;ng&apos;iroqlar mavjud emas
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Qo&apos;ng&apos;iroqlar qo&apos;shilganda bu yerda
+                  ko&apos;rinadi
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+
+      </div>
 
       {/* Leads Trend Chart */}
       <Card className="border-border/60">
@@ -763,7 +768,7 @@ export default function DashboardPage() {
                     className="mt-1 h-8 text-sm"
                     disabled={!hasActivePipeline || showPipelineEmptyState || showStagesLoader}
                   >
-                    <SelectValue placeholder="Stage tanlang" />
+                    <SelectValue placeholder="Etap tanlang" />
                   </SelectTrigger>
                   <SelectContent>
                     {leadsByStage?.map((stage) => (
@@ -786,8 +791,8 @@ export default function DashboardPage() {
             ) : !activeConversionStageId ? (
               <SectionPlaceholder
                 icon={Users}
-                title="Stage tanlang"
-                description="Konversiyani hisoblash uchun stage tanlang."
+                title="Etap tanlang"
+                description="Konversiyani hisoblash uchun etap tanlang."
               />
             ) : showConversionLoader ? (
               <SectionPlaceholder
@@ -845,7 +850,7 @@ export default function DashboardPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
               <BarChart3 className="h-5 w-5 text-violet-500" />
-              Stage bo&apos;yicha Taqsimot
+              Etap bo&apos;yicha Taqsimot
             </CardTitle>
           </CardHeader>
           <CardContent>

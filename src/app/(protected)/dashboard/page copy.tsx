@@ -352,7 +352,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4">
         {/* Jami Lidlar */}
         <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
           <CardContent className="p-4 md:p-5">
@@ -750,7 +750,7 @@ export default function DashboardPage() {
                   Ma&apos;lumot topilmadi
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Stage tanlang
+                  Etap tanlang
                 </p>
               </div>
             )}

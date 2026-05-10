@@ -380,7 +380,7 @@ export default function FormsPage() {
                                 disabled={!newForm.pipline_id}
                             >
                                 <SelectTrigger>
-                                    <SelectValue placeholder={newForm.pipline_id ? "Stage tanlang" : "Avval pipeline tanlang"} />
+                                    <SelectValue placeholder={newForm.pipline_id ? "Etap tanlang" : "Avval voronka tanlang"} />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {stages.map((stage) => (

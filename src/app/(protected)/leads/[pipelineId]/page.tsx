@@ -815,7 +815,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         }
 
         if (!creatingLeadStage) {
-            errors.name = "Stage tanlanmagan";
+            errors.name = "Etap tanlanmagan";
         }
 
         if (!leadEmployeeId) {

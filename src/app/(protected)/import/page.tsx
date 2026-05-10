@@ -411,9 +411,9 @@ export default function ImportPage() {
                     <>
                         <Card className="border-border bg-card">
                             <CardHeader>
-                                <CardTitle>2. Pipeline va Stage tanlash</CardTitle>
+                                <CardTitle>2. Voronka va Etap tanlash</CardTitle>
                                 <CardDescription>
-                                    Lidlar qaysi pipeline va stage'ga import qilinishini tanlang
+                                    Lidlar qaysi voronka va etap'ga import qilinishini tanlang
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
@@ -444,7 +444,7 @@ export default function ImportPage() {
                                             disabled={!selectedPipeline || stagesLoading}
                                         >
                                             <SelectTrigger>
-                                                <SelectValue placeholder="Stage tanlang" />
+                                                <SelectValue placeholder="Etap tanlang" />
                                             </SelectTrigger>
                                             <SelectContent>
                                                 {stages.map((stage) => (

@@ -55,6 +55,24 @@ interface LeadSheetProps {
     isUpdating?: boolean;
 }
 
+function getCallPhoneVariants(phone: string): string[] {
+    const digits = phone.replace(/\D/g, "");
+    if (!digits) return [];
+
+    const variants = new Set<string>();
+    variants.add(digits);
+
+    if (digits.startsWith("998") && digits.length >= 12) {
+        variants.add(digits.slice(3));
+    }
+
+    if (digits.length > 9) {
+        variants.add(digits.slice(-9));
+    }
+
+    return Array.from(variants).filter(Boolean);
+}
+
 export function LeadSheet({
     lead,
     isOpen,
@@ -122,6 +140,8 @@ export function LeadSheet({
     useEffect(() => {
         if (lead?.phone) {
             fetchCalls(lead.phone);
+        } else {
+            setCalls([]);
         }
     }, [lead?.phone]);
 
@@ -139,10 +159,22 @@ export function LeadSheet({
         setLoadingCalls(true);
         try {
             const supabase = createClient();
+            const phoneVariants = getCallPhoneVariants(phone);
+            if (phoneVariants.length === 0) {
+                setCalls([]);
+                return;
+            }
+
+            const phoneFilters = phoneVariants.flatMap((value) => [
+                `phone.eq.${value}`,
+                `caller.eq.${value}`,
+                `callee.eq.${value}`,
+            ]);
+
             const { data, error } = await supabase
                 .from("calls")
                 .select("*")
-                .eq("phone", phone)
+                .or(phoneFilters.join(","))
                 .not("download_url", "is", null)
                 .order("called_at", { ascending: false })
                 .limit(20);

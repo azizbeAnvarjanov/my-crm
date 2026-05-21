@@ -793,7 +793,6 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         await createStageMutation.mutateAsync({
             name: newStageName.trim(),
             pipeline_id: pipelineId,
-            order_index: stages.length,
             color: newStageColor,
         });
 

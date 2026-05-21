@@ -19,7 +19,7 @@ export interface Stage {
     id: string;
     name: string;
     pipeline_id: string;
-    order_index: number;
+    order_index?: number | null;
     color?: string;
     created_at?: string;
 }
@@ -150,7 +150,7 @@ export function useCreateStage() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async (stage: { name: string; pipeline_id: string; order_index: number; color?: string }) => {
+        mutationFn: async (stage: { name: string; pipeline_id: string; color?: string }) => {
             const supabase = createClient();
             const { data, error } = await supabase
                 .from("stages")

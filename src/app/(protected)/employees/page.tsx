@@ -60,6 +60,8 @@ const ALL_PAGES = [
     { path: "/pipelines", label: "Pipelines", category: "CRM" },
     { path: "/notes", label: "Mening eslatmalarim", category: "CRM" },
     { path: "/calls", label: "Qo'ng'iroqlar", category: "CRM" },
+    { path: "/calls-2", label: "Calls 2", category: "Analitika" },
+    { path: "/calls-stats", label: "Calls Stats", category: "Analitika" },
     { path: "/leads", label: "Yangi kelib tushgan lidlar", category: "CRM" },
     { path: "/not-assigned-leads", label: "Biriktirilmagan lidlar", category: "CRM" },
     { path: "/forms", label: "Formalar", category: "CRM" },

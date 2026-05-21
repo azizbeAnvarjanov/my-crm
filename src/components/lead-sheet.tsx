@@ -29,7 +29,7 @@ import { Lead, Stage } from "@/hooks/use-pipeline";
 import { useTasksByLead, useCreateTask, useUpdateTask, useDeleteTask, useToggleTaskStatus, TASK_TYPES, TaskType } from "@/hooks/use-tasks";
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
-import { Call } from "@/hooks/use-calls";
+import { Call, normalizeCallRow } from "@/hooks/use-calls";
 import {
     Dialog,
     DialogContent,
@@ -143,12 +143,12 @@ export function LeadSheet({
                 .from("calls")
                 .select("*")
                 .eq("phone", phone)
-                .not("record_url", "is", null)
-                .order("created_at", { ascending: false })
+                .not("download_url", "is", null)
+                .order("called_at", { ascending: false })
                 .limit(20);
 
             if (error) throw error;
-            setCalls(data || []);
+            setCalls((data || []).map(normalizeCallRow));
         } catch (error) {
             console.error("Error fetching calls:", error);
         } finally {
@@ -721,7 +721,7 @@ export function LeadSheet({
                                 ) : (
                                     calls.map((call) => {
                                         const isPlaying = playingCallId === call.id;
-                                        const date = new Date(call.created_at);
+                                        const date = new Date(call.called_at);
 
                                         return (
                                             <div key={call.id} className="border border-border rounded-lg p-2 space-y-2 hover:bg-accent/30 transition-colors">
@@ -729,19 +729,19 @@ export function LeadSheet({
                                                 <div className="flex items-center justify-between text-xs">
                                                     <div className="flex items-center gap-2">
                                                         {/* Direction Icon */}
-                                                        {call.direction === 0 ? (
+                                                        {call.direction === "incoming" ? (
                                                             <PhoneIncoming className="h-3.5 w-3.5 text-blue-500" />
                                                         ) : (
                                                             <PhoneOutgoing className="h-3.5 w-3.5 text-emerald-500" />
                                                         )}
 
                                                         {/* Direction Text */}
-                                                        <span className={call.direction === 0 ? "text-blue-500" : "text-emerald-500"}>
-                                                            {call.direction === 0 ? "Kiruvchi" : "Chiquvchi"}
+                                                        <span className={call.direction === "incoming" ? "text-blue-500" : "text-emerald-500"}>
+                                                            {call.direction === "incoming" ? "Kiruvchi" : "Chiquvchi"}
                                                         </span>
 
                                                         {/* Answered Status */}
-                                                        {call.answered === "1" ? (
+                                                        {call.answered ? (
                                                             <div className="flex items-center gap-1 text-green-600">
                                                                 <Check className="h-3 w-3" />
                                                                 <span>Javob berildi</span>

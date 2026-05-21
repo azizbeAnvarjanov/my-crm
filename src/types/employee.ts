@@ -50,6 +50,8 @@ export const ALL_PAGES = [
     "/pipelines",
     "/notes",
     "/calls",
+    "/calls-2",
+    "/calls-stats",
     "/settings",
     "/employees",
     "/forms",

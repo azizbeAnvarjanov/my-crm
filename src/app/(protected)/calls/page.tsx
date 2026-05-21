@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import {
     Phone,
     Download,
-    Calendar,
     Loader2,
     XCircle,
     X,
@@ -28,6 +27,8 @@ import {
     useCallsEmployees,
     useCallsStatsByEmployee,
     formatDuration,
+    getEmployeeParticipantIds,
+    normalizeCallRow,
     CallsFilter,
     EmployeeCallStats,
 } from "@/hooks/use-calls";
@@ -148,7 +149,7 @@ function EmployeeRow({
     onRecordingsClick
 }: {
     stats: EmployeeCallStats;
-    onRecordingsClick: (userId: string, employeeName: string) => void;
+    onRecordingsClick: (employeeId: string, employeeName: string) => void;
 }) {
     return (
         <div className="space-y-3">
@@ -160,7 +161,7 @@ function EmployeeRow({
                 <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => onRecordingsClick(stats.userId, stats.employeeName)}
+                    onClick={() => onRecordingsClick(stats.employeeId, stats.employeeName)}
                     className="gap-2 text-primary hover:text-primary"
                 >
                     <Headphones className="h-4 w-4" />
@@ -252,9 +253,9 @@ export default function CallsPage() {
         setSelectedEmployeeIds(selectedEmployeeIds.filter(id => id !== empId));
     };
 
-    // Navigate to recordings page with user_id filter (faster - direct query)
-    const handleRecordingsClick = (userId: string, employeeName: string) => {
-        router.push(`/calls/recordings?userId=${userId}&name=${encodeURIComponent(employeeName)}&startDate=${startDate}&endDate=${endDate}`);
+    // Navigate to recordings page with employee filter.
+    const handleRecordingsClick = (employeeId: string, employeeName: string) => {
+        router.push(`/calls/recordings?employeeId=${employeeId}&name=${encodeURIComponent(employeeName)}&startDate=${startDate}&endDate=${endDate}`);
     };
 
     // Export to Excel
@@ -265,24 +266,31 @@ export default function CallsPage() {
             let query = supabase
                 .from("calls")
                 .select("*")
-                .order("created_at", { ascending: false });
+                .order("called_at", { ascending: false });
 
             if (startDate) {
-                query = query.gte("created_at", startDate);
+                query = query.gte("called_at", startDate);
             }
             if (endDate) {
                 const end = new Date(endDate);
                 end.setDate(end.getDate() + 1);
-                query = query.lt("created_at", end.toISOString());
+                query = query.lt("called_at", end.toISOString());
             }
 
             // Filter by selected employees or all employees
             const empsToExport = selectedEmployeeIds.length > 0
                 ? employees.filter(e => selectedEmployeeIds.includes(e.id))
                 : employees;
-            const allUserIds = empsToExport.map(e => e.user_id).filter(Boolean);
-            if (allUserIds.length > 0) {
-                query = query.in("user_id", allUserIds);
+            const participantIds = Array.from(
+                new Set(empsToExport.flatMap((employee) => getEmployeeParticipantIds(employee)))
+            );
+
+            if (participantIds.length > 0) {
+                const participantFilters = participantIds.flatMap((participantId) => [
+                    `caller.eq.${participantId}`,
+                    `callee.eq.${participantId}`,
+                ]);
+                query = query.or(participantFilters.join(","));
             }
 
             const { data: calls, error } = await query;
@@ -291,7 +299,9 @@ export default function CallsPage() {
             // Find employee names
             const employeeMap = new Map<string, string>();
             employees.forEach((e) => {
-                if (e.user_id) employeeMap.set(e.user_id, e.name);
+                getEmployeeParticipantIds(e).forEach((participantId) => {
+                    employeeMap.set(participantId, e.name);
+                });
             });
 
             // Create CSV content
@@ -305,16 +315,17 @@ export default function CallsPage() {
                 "Xodim",
             ];
 
-            const rows = (calls || []).map((call) => {
-                const date = new Date(call.created_at);
+            const rows = (calls || []).map((rawCall) => {
+                const call = normalizeCallRow(rawCall);
+                const date = new Date(call.called_at);
                 return [
                     date.toLocaleDateString("uz-UZ"),
                     date.toLocaleTimeString("uz-UZ"),
                     call.phone,
-                    call.direction === 1 ? "Chiquvchi" : "Kiruvchi",
-                    call.answered === "1" ? "Javob berildi" : "Javobsiz",
+                    call.direction === "outgoing" ? "Chiquvchi" : "Kiruvchi",
+                    call.answered ? "Javob berildi" : "Javobsiz",
                     call.duration || 0,
-                    employeeMap.get(call.user_id) || call.user_id,
+                    employeeMap.get(call.caller || "") || employeeMap.get(call.callee || "") || "",
                 ];
             });
 
@@ -358,7 +369,7 @@ export default function CallsPage() {
                             <XCircle className="h-6 w-6 text-red-500" />
                         </div>
                         <h2 className="text-xl font-semibold text-card-foreground mb-2">
-                            Ruxsat yo'q
+                            Ruxsat yo&rsquo;q
                         </h2>
                         <p className="text-muted-foreground">
                             Bu sahifaga faqat admin kirishga ruxsat etilgan.
@@ -463,9 +474,9 @@ export default function CallsPage() {
             ) : employeeStats.length === 0 ? (
                 <div className="text-center py-12">
                     <Phone className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-medium mb-2">Ma'lumot topilmadi</h3>
+                    <h3 className="text-lg font-medium mb-2">Ma&rsquo;lumot topilmadi</h3>
                     <p className="text-muted-foreground">
-                        Tanlangan davr uchun qo'ng'iroq ma'lumotlari yo'q
+                        Tanlangan davr uchun qo&rsquo;ng&rsquo;iroq ma&rsquo;lumotlari yo&rsquo;q
                     </p>
                 </div>
             ) : (

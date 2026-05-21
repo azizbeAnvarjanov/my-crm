@@ -53,6 +53,8 @@ import {
     useCallsEmployees,
     useCallRecordings,
     formatDuration,
+    getEmployeeParticipantIds,
+    normalizeCallRow,
     Call,
     CallRecordingsFilter,
 } from "@/hooks/use-calls";
@@ -64,6 +66,8 @@ function formatTime(seconds: number): string {
     const secs = Math.floor(seconds % 60);
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
+
+const EMPTY_CALLS: Call[] = [];
 
 // Audio Player Dialog Component
 function AudioPlayerDialog({
@@ -80,21 +84,6 @@ function AudioPlayerDialog({
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [volume, setVolume] = useState(1);
-
-    // Reset state when call changes
-    useEffect(() => {
-        setIsPlaying(false);
-        setCurrentTime(0);
-        setDuration(0);
-    }, [call]);
-
-    // Stop playing when dialog closes
-    useEffect(() => {
-        if (!open && audioRef.current) {
-            audioRef.current.pause();
-            setIsPlaying(false);
-        }
-    }, [open]);
 
     const handlePlayPause = () => {
         if (!audioRef.current) return;
@@ -145,13 +134,27 @@ function AudioPlayerDialog({
         }
     };
 
+    const handleOpenChange = (nextOpen: boolean) => {
+        if (!nextOpen && audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+        }
+
+        if (!nextOpen) {
+            setIsPlaying(false);
+            setCurrentTime(0);
+            setDuration(0);
+            onClose();
+        }
+    };
+
     if (!call) return null;
 
-    const date = new Date(call.created_at);
-    const isIncoming = call.direction === 0;
+    const date = new Date(call.called_at);
+    const isIncoming = call.direction === "incoming";
 
     return (
-        <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogContent className="sm:max-w-lg">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-3">
@@ -176,12 +179,12 @@ function AudioPlayerDialog({
                     <div className="flex items-center gap-2">
                         <Badge
                             variant="outline"
-                            className={`${call.answered === "1"
+                            className={`${call.answered
                                 ? "border-green-500/50 text-green-500"
                                 : "border-red-500/50 text-red-500"
                                 }`}
                         >
-                            {call.answered === "1" ? "Javob berildi" : "Javobsiz"}
+                            {call.answered ? "Javob berildi" : "Javobsiz"}
                         </Badge>
                         <Badge variant="secondary">
                             {isIncoming ? "Kiruvchi" : "Chiquvchi"}
@@ -264,7 +267,7 @@ function AudioPlayerDialog({
                         </div>
                     ) : (
                         <div className="text-center py-8 text-muted-foreground">
-                            Bu qo'ng'iroq uchun yozuv mavjud emas
+                            Bu qo&rsquo;ng&rsquo;iroq uchun yozuv mavjud emas
                         </div>
                     )}
                 </div>
@@ -285,14 +288,15 @@ export default function CallRecordingsPage() {
 
     const isAdmin = currentEmployee?.role === "super-admin";
 
-    // Filter state - initialize from URL params (userId directly)
+    // Filter state - initialize from URL params
     const today = new Date().toISOString().split("T")[0];
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const legacyParticipantId = searchParams.get("userId");
 
     const [startDate, setStartDate] = useState(searchParams.get("startDate") || oneMonthAgo);
     const [endDate, setEndDate] = useState(searchParams.get("endDate") || today);
-    const [selectedUserId, setSelectedUserId] = useState<string | null>(
-        searchParams.get("userId") || null
+    const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(
+        searchParams.get("employeeId") || null
     );
     const [employeeName, setEmployeeName] = useState(
         searchParams.get("name") || ""
@@ -310,11 +314,36 @@ export default function CallRecordingsPage() {
     const [selectedCall, setSelectedCall] = useState<Call | null>(null);
     const [playerOpen, setPlayerOpen] = useState(false);
 
+    const selectedEmployee = useMemo(
+        () => employees.find((employee) => employee.id === selectedEmployeeId) || null,
+        [employees, selectedEmployeeId]
+    );
+
+    const selectedParticipantIds = useMemo(
+        () => (selectedEmployee ? getEmployeeParticipantIds(selectedEmployee) : []),
+        [selectedEmployee]
+    );
+
+    useEffect(() => {
+        if (selectedEmployeeId || !legacyParticipantId || employees.length === 0) {
+            return;
+        }
+
+        const matchedEmployee = employees.find((employee) =>
+            getEmployeeParticipantIds(employee).includes(legacyParticipantId)
+        );
+
+        if (matchedEmployee) {
+            setSelectedEmployeeId(matchedEmployee.id);
+            setEmployeeName((currentName) => currentName || matchedEmployee.name);
+        }
+    }, [employees, legacyParticipantId, selectedEmployeeId]);
+
     // Update employee name when selecting from dropdown
     const handleEmployeeSelect = (empId: string) => {
         const emp = employees.find(e => e.id === empId);
-        if (emp?.user_id) {
-            setSelectedUserId(emp.user_id);
+        if (emp) {
+            setSelectedEmployeeId(emp.id);
             setEmployeeName(emp.name);
             setCurrentPage(1); // Reset page on employee change
         }
@@ -323,15 +352,15 @@ export default function CallRecordingsPage() {
     const filter: CallRecordingsFilter = useMemo(() => ({
         startDate,
         endDate,
-        userId: selectedUserId,
+        participantIds: selectedParticipantIds,
         page: currentPage,
         pageSize,
-    }), [startDate, endDate, selectedUserId, currentPage, pageSize]);
+    }), [startDate, endDate, selectedParticipantIds, currentPage, pageSize]);
 
     // Get recordings - now with server-side pagination
     const { data: recordingsResult, isLoading: recordingsLoading } = useCallRecordings(filter);
 
-    const recordings = recordingsResult?.data || [];
+    const recordings = recordingsResult?.data ?? EMPTY_CALLS;
     const totalCount = recordingsResult?.totalCount || 0;
     const totalPages = Math.ceil(totalCount / pageSize);
 
@@ -346,7 +375,7 @@ export default function CallRecordingsPage() {
     // Reset page when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [selectedUserId, startDate, endDate, pageSize]);
+    }, [selectedEmployeeId, startDate, endDate, pageSize]);
 
     // Open player dialog
     const handlePlayClick = (call: Call) => {
@@ -356,7 +385,7 @@ export default function CallRecordingsPage() {
 
     // Export to Excel
     const handleExport = async () => {
-        if (!selectedUserId) return;
+        if (!selectedEmployeeId || selectedParticipantIds.length === 0) return;
 
         setExporting(true);
         try {
@@ -364,17 +393,24 @@ export default function CallRecordingsPage() {
             let query = supabase
                 .from("calls")
                 .select("*")
-                .order("created_at", { ascending: false })
-                .eq("user_id", selectedUserId)
-                .not("record_url", "is", null);
+                .order("called_at", { ascending: false })
+                .not("download_url", "is", null);
+
+            if (selectedParticipantIds.length > 0) {
+                const participantFilters = selectedParticipantIds.flatMap((participantId) => [
+                    `caller.eq.${participantId}`,
+                    `callee.eq.${participantId}`,
+                ]);
+                query = query.or(participantFilters.join(","));
+            }
 
             if (startDate) {
-                query = query.gte("created_at", startDate);
+                query = query.gte("called_at", startDate);
             }
             if (endDate) {
                 const end = new Date(endDate);
                 end.setDate(end.getDate() + 1);
-                query = query.lt("created_at", end.toISOString());
+                query = query.lt("called_at", end.toISOString());
             }
 
             const { data: calls, error } = await query;
@@ -391,14 +427,15 @@ export default function CallRecordingsPage() {
                 "Yozuv URL",
             ];
 
-            const rows = (calls || []).map((call: Call) => {
-                const date = new Date(call.created_at);
+            const rows = (calls || []).map((rawCall) => {
+                const call = normalizeCallRow(rawCall);
+                const date = new Date(call.called_at);
                 return [
                     date.toLocaleDateString("uz-UZ"),
                     date.toLocaleTimeString("uz-UZ"),
                     call.phone,
-                    call.direction === 1 ? "Chiquvchi" : "Kiruvchi",
-                    call.answered === "1" ? "Javob berildi" : "Javobsiz",
+                    call.direction === "outgoing" ? "Chiquvchi" : "Kiruvchi",
+                    call.answered ? "Javob berildi" : "Javobsiz",
                     call.duration || 0,
                     call.record_url || "",
                 ];
@@ -444,7 +481,7 @@ export default function CallRecordingsPage() {
                             <XCircle className="h-6 w-6 text-red-500" />
                         </div>
                         <h2 className="text-xl font-semibold text-card-foreground mb-2">
-                            Ruxsat yo'q
+                            Ruxsat yo&rsquo;q
                         </h2>
                         <p className="text-muted-foreground">
                             Bu sahifaga faqat admin kirishga ruxsat etilgan.
@@ -463,7 +500,7 @@ export default function CallRecordingsPage() {
                     <Phone className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                    <h1 className="text-2xl font-bold text-foreground">Qo'ng'iroq yozuvlari</h1>
+                    <h1 className="text-2xl font-bold text-foreground">Qo&rsquo;ng&rsquo;iroq yozuvlari</h1>
                     <p className="text-muted-foreground text-sm">
                         Xodimlar suhbatlarini tinglash
                     </p>
@@ -481,7 +518,7 @@ export default function CallRecordingsPage() {
                                 Xodim
                             </label>
                             <Select
-                                value={employees.find(e => e.user_id === selectedUserId)?.id || ""}
+                                value={selectedEmployeeId || ""}
                                 onValueChange={handleEmployeeSelect}
                             >
                                 <SelectTrigger className="w-52 bg-background border-border">
@@ -542,7 +579,7 @@ export default function CallRecordingsPage() {
                         {/* Export Button */}
                         <Button
                             onClick={handleExport}
-                            disabled={!selectedUserId || exporting}
+                            disabled={!selectedEmployeeId || selectedParticipantIds.length === 0 || exporting}
                             variant="outline"
                             className="gap-2"
                         >
@@ -558,7 +595,7 @@ export default function CallRecordingsPage() {
             </Card>
 
             {/* Results */}
-            {!selectedUserId ? (
+            {!selectedEmployeeId ? (
                 <Card className="border-border bg-card">
                     <CardContent className="py-16 text-center">
                         <User className="h-16 w-16 text-muted-foreground mx-auto mb-4 opacity-50" />
@@ -566,7 +603,7 @@ export default function CallRecordingsPage() {
                             Xodim tanlang
                         </h3>
                         <p className="text-muted-foreground max-w-md mx-auto">
-                            Qo'ng'iroq yozuvlarini ko'rish uchun yuqoridagi ro'yxatdan xodimni tanlang
+                            Qo&rsquo;ng&rsquo;iroq yozuvlarini ko&rsquo;rish uchun yuqoridagi ro&rsquo;yxatdan xodimni tanlang
                         </p>
                     </CardContent>
                 </Card>
@@ -585,7 +622,7 @@ export default function CallRecordingsPage() {
                             Yozuv topilmadi
                         </h3>
                         <p className="text-muted-foreground max-w-md mx-auto">
-                            {employeeName} uchun tanlangan davr ichida qo'ng'iroq yozuvlari mavjud emas
+                            {employeeName} uchun tanlangan davr ichida qo&rsquo;ng&rsquo;iroq yozuvlari mavjud emas
                         </p>
                     </CardContent>
                 </Card>
@@ -598,7 +635,7 @@ export default function CallRecordingsPage() {
                                 {employeeName} - {totalCount} ta yozuv
                             </h2>
                             <div className="flex items-center gap-2">
-                                <span className="text-sm text-muted-foreground">Ko'rsatish:</span>
+                                <span className="text-sm text-muted-foreground">Ko&rsquo;rsatish:</span>
                                 <Select
                                     value={pageSize.toString()}
                                     onValueChange={(v) => {
@@ -627,7 +664,7 @@ export default function CallRecordingsPage() {
                                     <TableHead>Telefon</TableHead>
                                     <TableHead>Sana</TableHead>
                                     <TableHead>Vaqt</TableHead>
-                                    <TableHead>Yo'nalish</TableHead>
+                                    <TableHead>Yo&rsquo;nalish</TableHead>
                                     <TableHead>Holat</TableHead>
                                     <TableHead>Davomiylik</TableHead>
                                     <TableHead className="w-20 text-center">Tinglash</TableHead>
@@ -635,8 +672,8 @@ export default function CallRecordingsPage() {
                             </TableHeader>
                             <TableBody>
                                 {filteredRecordings.map((call: Call, index: number) => {
-                                    const date = new Date(call.created_at);
-                                    const isIncoming = call.direction === 0;
+                                    const date = new Date(call.called_at);
+                                    const isIncoming = call.direction === "incoming";
                                     const rowNumber = (currentPage - 1) * pageSize + index + 1;
 
                                     return (
@@ -667,12 +704,12 @@ export default function CallRecordingsPage() {
                                             <TableCell>
                                                 <Badge
                                                     variant="outline"
-                                                    className={`${call.answered === "1"
+                                                    className={`${call.answered
                                                         ? "border-green-500/50 text-green-500"
                                                         : "border-red-500/50 text-red-500"
                                                         }`}
                                                 >
-                                                    {call.answered === "1" ? "Javob berildi" : "Javobsiz"}
+                                                    {call.answered ? "Javob berildi" : "Javobsiz"}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell>{formatDuration(call.duration)}</TableCell>
@@ -753,6 +790,7 @@ export default function CallRecordingsPage() {
 
             {/* Audio Player Dialog */}
             <AudioPlayerDialog
+                key={selectedCall?.id || "empty"}
                 call={selectedCall}
                 open={playerOpen}
                 onClose={() => {

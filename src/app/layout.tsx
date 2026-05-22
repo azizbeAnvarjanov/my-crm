@@ -4,8 +4,8 @@ import { ThemeProvider } from "@/lib/providers/theme-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CRM Pro - Enterprise Customer Management",
-  description: "Professional CRM solution for modern businesses. Manage contacts, projects, and communications in one place.",
+  title: "EASY CRM",
+  description: "EASY CRM - Professional Customer Management",
   keywords: ["CRM", "customer management", "business", "enterprise", "contacts", "projects"],
 };
 

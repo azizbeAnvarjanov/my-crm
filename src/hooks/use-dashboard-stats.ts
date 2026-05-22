@@ -1,7 +1,11 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { getEmployeeParticipantIds } from "@/hooks/use-calls";
+import {
+    applyCallParticipantFilter,
+    getCallParticipantValues,
+    getEmployeeParticipantIds,
+} from "@/hooks/use-calls";
 import { createClient } from "@/lib/supabase/client";
 
 // Dashboard statistikasi turlarini belgilaymiz
@@ -54,6 +58,16 @@ export interface LeadsTrend {
     label: string;
 }
 
+export type DashboardTrendPeriod = "day" | "week" | "month" | "year";
+
+export interface CallsTrendPoint {
+    date: string;
+    label: string;
+    incoming: number;
+    outgoing: number;
+    total: number;
+}
+
 // Sana filtri turi
 export interface DashboardDateRange {
     startDate: string; // ISO string yoki YYYY-MM-DD
@@ -65,19 +79,18 @@ type DateRangeQuery<T> = {
     lte: (column: string, value: string) => T;
 };
 
-type ParticipantFilterQuery<T> = {
-    or: (filters: string) => T;
-};
-
 const dashboardKeys = {
     all: ["dashboard-stats"] as const,
-    stats: (pipelineId?: string, dateRange?: DashboardDateRange) => [...dashboardKeys.all, "stats", pipelineId, dateRange?.startDate, dateRange?.endDate] as const,
+    stats: (pipelineId?: string, branchId?: string | null, dateRange?: DashboardDateRange) =>
+        [...dashboardKeys.all, "stats", pipelineId, branchId, dateRange?.startDate, dateRange?.endDate] as const,
     leadsByStage: (pipelineId?: string) =>
         [...dashboardKeys.all, "leads-by-stage", pipelineId] as const,
     employeeConversion: (pipelineId?: string) =>
         [...dashboardKeys.all, "employee-conversion", pipelineId] as const,
-    leadsTrend: (period: "day" | "week" | "month" | "year", pipelineId?: string) =>
+    leadsTrend: (period: DashboardTrendPeriod, pipelineId?: string) =>
         [...dashboardKeys.all, "leads-trend", period, pipelineId] as const,
+    callsTrend: (period: DashboardTrendPeriod, branchId?: string | null, participantKey?: string) =>
+        [...dashboardKeys.all, "calls-trend", period, branchId, participantKey] as const,
 };
 
 // Sana filtri qo'llash helper
@@ -88,23 +101,115 @@ function applyDateRange<T extends DateRangeQuery<T>>(query: T, dateRange?: Dashb
     return query;
 }
 
-function applyParticipantFilter<T extends ParticipantFilterQuery<T>>(query: T, participantIds: string[]) {
-    if (participantIds.length === 0) return query;
+function getTrendConfig(period: DashboardTrendPeriod) {
+    if (period === "day") {
+        return {
+            days: 7,
+            format: { weekday: "short" } satisfies Intl.DateTimeFormatOptions,
+        };
+    }
 
-    const filters = participantIds.flatMap((participantId) => [
-        `caller.eq.${participantId}`,
-        `callee.eq.${participantId}`,
-    ]);
+    if (period === "week") {
+        return {
+            days: 12 * 7,
+            format: { month: "short", day: "numeric" } satisfies Intl.DateTimeFormatOptions,
+        };
+    }
 
-    return query.or(filters.join(","));
+    if (period === "year") {
+        return {
+            days: 365,
+            format: { month: "short" } satisfies Intl.DateTimeFormatOptions,
+        };
+    }
+
+    return {
+        days: 30,
+        format: { month: "short", day: "numeric" } satisfies Intl.DateTimeFormatOptions,
+    };
+}
+
+function buildTrendPoints(period: DashboardTrendPeriod, countsByDay: Map<string, number>) {
+    const now = new Date();
+    const { days, format } = getTrendConfig(period);
+    const result: LeadsTrend[] = [];
+
+    for (let i = 0; i < days; i++) {
+        const date = new Date(now);
+        date.setDate(date.getDate() - (days - 1 - i));
+
+        const dateKey = date.toISOString().split("T")[0];
+        result.push({
+            date: dateKey,
+            count: countsByDay.get(dateKey) ?? 0,
+            label: date.toLocaleDateString("ru-RU", format),
+        });
+    }
+
+    return result;
+}
+
+function buildCallsTrendPoints(
+    period: DashboardTrendPeriod,
+    countsByDay: Map<string, { incoming: number; outgoing: number }>
+) {
+    const now = new Date();
+    const { days, format } = getTrendConfig(period);
+    const result: CallsTrendPoint[] = [];
+
+    for (let i = 0; i < days; i++) {
+        const date = new Date(now);
+        date.setDate(date.getDate() - (days - 1 - i));
+
+        const dateKey = date.toISOString().split("T")[0];
+        const counts = countsByDay.get(dateKey) ?? { incoming: 0, outgoing: 0 };
+        result.push({
+            date: dateKey,
+            label: date.toLocaleDateString("ru-RU", format),
+            incoming: counts.incoming,
+            outgoing: counts.outgoing,
+            total: counts.incoming + counts.outgoing,
+        });
+    }
+
+    return result;
+}
+
+async function getBranchEmployeesWithParticipants(
+    supabase: ReturnType<typeof createClient>,
+    branchId: string,
+) {
+    const { data: employees, error: empError } = await supabase
+        .from("xodimlar")
+        .select("id, name, employee_id, user_id")
+        .eq("branch_id", branchId);
+
+    if (empError) throw empError;
+    if (!employees?.length) return [];
+
+    return employees
+        .map((employee) => ({
+            id: String(employee.id),
+            name: employee.name,
+            participantIds: getEmployeeParticipantIds({
+                id: String(employee.id),
+                user_id: employee.user_id ?? undefined,
+                employee_id: employee.employee_id ?? undefined,
+            }),
+        }))
+        .filter((employee) => employee.participantIds.length > 0);
 }
 
 // Asosiy dashboard statistikasi (pipeline + sana filtri bo'yicha)
-export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDateRange) {
+export function useDashboardStats(
+    pipelineId?: string,
+    dateRange?: DashboardDateRange,
+    branchId?: string | null,
+) {
     const supabase = createClient();
 
     return useQuery({
-        queryKey: dashboardKeys.stats(pipelineId, dateRange),
+        queryKey: dashboardKeys.stats(pipelineId, branchId, dateRange),
         queryFn: async () => {
             if (!pipelineId) {
                 return {
@@ -191,13 +296,13 @@ export function useDashboardStats(pipelineId?: string, dateRange?: DashboardDate
 
             // Qo'ng'iroqlar (dateRange bilan)
             let totalCallsQ = supabase.from("calls").select("*", { count: "exact", head: true });
-            let callsTodayQ = supabase.from("calls").select("*", { count: "exact", head: true }).gte("created_at", today.toISOString());
-            let callsWeekQ = supabase.from("calls").select("*", { count: "exact", head: true }).gte("created_at", weekAgo.toISOString());
+            let callsTodayQ = supabase.from("calls").select("*", { count: "exact", head: true }).gte("called_at", today.toISOString());
+            let callsWeekQ = supabase.from("calls").select("*", { count: "exact", head: true }).gte("called_at", weekAgo.toISOString());
 
             if (dateRange) {
-                totalCallsQ = applyDateRange(totalCallsQ, dateRange);
-                callsTodayQ = applyDateRange(callsTodayQ, dateRange);
-                callsWeekQ = applyDateRange(callsWeekQ, dateRange);
+                totalCallsQ = applyDateRange(totalCallsQ, dateRange, "called_at");
+                callsTodayQ = applyDateRange(callsTodayQ, dateRange, "called_at");
+                callsWeekQ = applyDateRange(callsWeekQ, dateRange, "called_at");
             }
 
             const [
@@ -393,40 +498,16 @@ export function useTopCallers(branchId: string | null, dateRange?: DashboardDate
         queryFn: async () => {
             if (!branchId) return [];
 
-            const { data: employees, error: empError } = await supabase
-                .from("xodimlar")
-                .select("id, name, employee_id, user_id")
-                .eq("branch_id", branchId);
-
-            if (empError) throw empError;
-            if (!employees?.length) return [];
-
-            const employeesWithParticipants = employees
-                .map((employee) => ({
-                    id: String(employee.id),
-                    name: employee.name,
-                    participantIds: getEmployeeParticipantIds({
-                        id: String(employee.id),
-                        user_id: employee.user_id ?? undefined,
-                        employee_id: employee.employee_id ?? undefined,
-                    }),
-                }))
-                .filter((employee) => employee.participantIds.length > 0);
-
+            const employeesWithParticipants = await getBranchEmployeesWithParticipants(
+                supabase,
+                branchId,
+            );
             if (!employeesWithParticipants.length) return [];
 
-            const allParticipantIds = Array.from(
-                new Set(
-                    employeesWithParticipants.flatMap((employee) => employee.participantIds)
-                )
-            );
+            let callsQuery = supabase
+                .from("calls")
+                .select("caller, callee, operator_id");
 
-            let callsQuery = applyParticipantFilter(
-                supabase
-                    .from("calls")
-                    .select("caller, callee"),
-                allParticipantIds
-            );
             callsQuery = applyDateRange(callsQuery, dateRange, "called_at");
 
             const { data: calls, error: callsError } = await callsQuery;
@@ -445,17 +526,20 @@ export function useTopCallers(branchId: string | null, dateRange?: DashboardDate
             for (const employee of employeesWithParticipants) {
                 callCounts.set(employee.id, 0);
             }
+            let unmatchedCalls = 0;
 
             for (const call of calls ?? []) {
                 const matchedEmployeeIds = new Set<string>();
 
-                for (const participantId of [call.caller, call.callee]) {
-                    if (!participantId) continue;
-
+                for (const participantId of getCallParticipantValues(call)) {
                     const employeeIds = participantToEmployeeIds.get(participantId);
                     if (!employeeIds?.length) continue;
 
                     employeeIds.forEach((employeeId) => matchedEmployeeIds.add(employeeId));
+                }
+
+                if (matchedEmployeeIds.size === 0) {
+                    unmatchedCalls += 1;
                 }
 
                 matchedEmployeeIds.forEach((employeeId) => {
@@ -468,6 +552,14 @@ export function useTopCallers(branchId: string | null, dateRange?: DashboardDate
                 employee_name: employee.name,
                 call_count: callCounts.get(employee.id) ?? 0,
             }));
+
+            if (unmatchedCalls > 0) {
+                results.push({
+                    employee_id: "__unknown__",
+                    employee_name: "Noma'lum",
+                    call_count: unmatchedCalls,
+                });
+            }
 
             return results
                 .filter((result) => result.call_count > 0)
@@ -486,7 +578,7 @@ export function useTopCallers(branchId: string | null, dateRange?: DashboardDate
 }
 
 // Leads trend (pipeline bo'yicha)
-export function useLeadsTrend(period: "day" | "week" | "month" | "year", pipelineId?: string) {
+export function useLeadsTrend(period: DashboardTrendPeriod, pipelineId?: string) {
     const supabase = createClient();
 
     return useQuery({
@@ -495,19 +587,7 @@ export function useLeadsTrend(period: "day" | "week" | "month" | "year", pipelin
             if (!pipelineId) return [];
 
             const now = new Date();
-            let days = 30;
-            let format: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-
-            if (period === "day") {
-                days = 7;
-                format = { weekday: "short" };
-            } else if (period === "week") {
-                days = 12 * 7;
-                format = { month: "short", day: "numeric" };
-            } else if (period === "year") {
-                days = 365;
-                format = { month: "short" };
-            }
+            const { days, format } = getTrendConfig(period);
 
             const startDate = new Date(now);
             startDate.setDate(startDate.getDate() - (days - 1));
@@ -546,9 +626,72 @@ export function useLeadsTrend(period: "day" | "week" | "month" | "year", pipelin
                 });
             }
 
-            return result;
+            return buildTrendPoints(period, countsByDay);
         },
         enabled: !!pipelineId,
+        placeholderData: keepPreviousData,
+    });
+}
+
+// Calls trend (branch/xodim bo'yicha)
+export function useCallsTrend(
+    period: DashboardTrendPeriod,
+    branchId: string | null,
+    participantIds: string[] = [],
+) {
+    const supabase = createClient();
+    const participantKey = participantIds.join(",");
+
+    return useQuery({
+        queryKey: dashboardKeys.callsTrend(period, branchId, participantKey),
+        queryFn: async () => {
+            if (!branchId) return [];
+
+            const now = new Date();
+            const { days } = getTrendConfig(period);
+
+            const startDate = new Date(now);
+            startDate.setDate(startDate.getDate() - (days - 1));
+            startDate.setHours(0, 0, 0, 0);
+
+            const endDate = new Date(now);
+            endDate.setHours(23, 59, 59, 999);
+
+            let callsQuery = supabase
+                .from("calls")
+                .select("called_at, created_at, direction");
+
+            if (participantIds.length > 0) {
+                callsQuery = applyCallParticipantFilter(callsQuery, participantIds);
+            }
+
+            callsQuery = callsQuery
+                .gte("called_at", startDate.toISOString())
+                .lte("called_at", endDate.toISOString());
+
+            const { data, error } = await callsQuery;
+            if (error) throw error;
+
+            const countsByDay = new Map<string, { incoming: number; outgoing: number }>();
+            for (const call of data ?? []) {
+                const dateValue = call.called_at ?? call.created_at;
+                if (!dateValue) continue;
+
+                const dateKey = dateValue.split("T")[0];
+                const dayCounts = countsByDay.get(dateKey) ?? { incoming: 0, outgoing: 0 };
+
+                if (call.direction === "inbound") {
+                    dayCounts.incoming += 1;
+                } else if (call.direction === "outbound") {
+                    dayCounts.outgoing += 1;
+                }
+
+                countsByDay.set(dateKey, dayCounts);
+            }
+
+            return buildCallsTrendPoints(period, countsByDay);
+        },
+        enabled: !!branchId,
         placeholderData: keepPreviousData,
     });
 }

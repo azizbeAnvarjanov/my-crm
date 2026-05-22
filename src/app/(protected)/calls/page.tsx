@@ -2,8 +2,10 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
+    ChevronLeft,
+    ChevronRight,
     Clock,
     Download,
     Loader2,
@@ -46,16 +48,23 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
-import { Call, formatDuration, normalizeCallRow } from "@/hooks/use-calls";
+import {
+    Call,
+    fetchPaginatedCalls,
+    formatDuration,
+    getCallStatusLabel,
+    getEmployeeParticipantIds,
+} from "@/hooks/use-calls";
 
-const RECORDINGS_LIMIT = 20;
+const PAGE_SIZE = 20;
 const EMPTY_CALLS: Call[] = [];
 
 type ManagerEmployee = {
-    id: number;
+    id: string;
     name: string;
     role: string;
     user_id: string | null;
+    employee_id: string | null;
 };
 
 function formatTime(seconds: number): string {
@@ -175,7 +184,7 @@ function AudioPlayerDialog({
                             variant="outline"
                             className={call.answered ? "border-green-500/50 text-green-500" : "border-red-500/50 text-red-500"}
                         >
-                            {call.answered ? "Javob berildi" : "Javobsiz"}
+                            {getCallStatusLabel(call)}
                         </Badge>
                         <Badge variant="secondary">
                             {isIncoming ? "Kiruvchi" : "Chiquvchi"}
@@ -249,6 +258,7 @@ export default function Calls2Page() {
     const { data: currentEmployee, isLoading: employeeLoading } = useEmployee();
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedEmployeeId, setSelectedEmployeeId] = useState(searchParams.get("employeeId") || "all");
+    const [currentPage, setCurrentPage] = useState(1);
     const [selectedCall, setSelectedCall] = useState<Call | null>(null);
     const [playerOpen, setPlayerOpen] = useState(false);
 
@@ -260,48 +270,59 @@ export default function Calls2Page() {
             const supabase = createClient();
             const { data, error } = await supabase
                 .from("xodimlar")
-                .select("id, name, role, user_id")
+                .select("id, name, role, user_id, employee_id")
                 .eq("role", "manager")
                 .order("name", { ascending: true });
 
             if (error) throw error;
-            return (data || []) as ManagerEmployee[];
+            return (data || []).map((employee) => ({
+                id: String(employee.id),
+                name: employee.name,
+                role: employee.role,
+                user_id: employee.user_id ? String(employee.user_id) : null,
+                employee_id: employee.employee_id ? String(employee.employee_id) : null,
+            })) as ManagerEmployee[];
         },
         enabled: isAdmin,
     });
 
     const selectedEmployee = useMemo(
-        () => managers.find((employee) => employee.id.toString() === selectedEmployeeId) || null,
+        () => managers.find((employee) => employee.id === selectedEmployeeId) || null,
         [managers, selectedEmployeeId]
     );
 
+    const selectedParticipantIds = useMemo(
+        () =>
+            selectedEmployee
+                ? getEmployeeParticipantIds({
+                    id: selectedEmployee.id,
+                    user_id: selectedEmployee.user_id ?? undefined,
+                    employee_id: selectedEmployee.employee_id ?? undefined,
+                })
+                : [],
+        [selectedEmployee]
+    );
+
     const {
-        data: recordings = EMPTY_CALLS,
+        data: recordingsResult,
         isLoading: recordingsLoading,
         refetch,
         isFetching,
     } = useQuery({
-        queryKey: ["calls2-recordings", RECORDINGS_LIMIT, selectedEmployee?.user_id || "all"],
-        queryFn: async () => {
-            const supabase = createClient();
-            let query = supabase
-                .from("calls")
-                .select("*")
-                .not("download_url", "is", null)
-                .order("called_at", { ascending: false })
-                .limit(RECORDINGS_LIMIT);
-
-            if (selectedEmployee?.user_id) {
-                query = query.eq("caller", selectedEmployee.user_id);
-            }
-
-            const { data, error } = await query;
-
-            if (error) throw error;
-            return (data || []).map(normalizeCallRow);
-        },
+        queryKey: ["calls-recordings", currentPage, selectedEmployeeId, selectedParticipantIds.join(",")],
+        queryFn: async () =>
+            fetchPaginatedCalls(createClient(), {
+                participantIds: selectedParticipantIds,
+                page: currentPage,
+                pageSize: PAGE_SIZE,
+            }),
         enabled: isAdmin,
+        placeholderData: keepPreviousData,
     });
+
+    const recordings = recordingsResult?.data ?? EMPTY_CALLS;
+    const totalCount = recordingsResult?.totalCount ?? 0;
+    const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
     const filteredRecordings = useMemo(() => {
         if (!searchQuery.trim()) return recordings;
@@ -357,7 +378,7 @@ export default function Calls2Page() {
                 <div>
                     <h1 className="text-2xl font-bold text-foreground">Calls 2</h1>
                     <p className="text-sm text-muted-foreground">
-                        Calls table ichidan oxirgi {RECORDINGS_LIMIT} ta recording
+                        Calls table ichidan har sahifada {PAGE_SIZE} tadan qo&apos;ng&apos;iroq
                     </p>
                 </div>
             </div>
@@ -367,16 +388,21 @@ export default function Calls2Page() {
                     <div className="flex flex-wrap items-end gap-4">
                         <div className="min-w-[240px] space-y-1.5">
                             <label className="text-sm text-muted-foreground">Xodim</label>
-                            <Select value={selectedEmployeeId} onValueChange={setSelectedEmployeeId}>
+                            <Select
+                                value={selectedEmployeeId}
+                                onValueChange={(value) => {
+                                    setSelectedEmployeeId(value);
+                                    setCurrentPage(1);
+                                }}
+                            >
                                 <SelectTrigger className="w-full bg-background border-border">
                                     <SelectValue placeholder="Manager tanlang" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">Barchasi</SelectItem>
                                     {managers
-                                        .filter((employee) => employee.user_id)
                                         .map((employee) => (
-                                            <SelectItem key={employee.id} value={employee.id.toString()}>
+                                            <SelectItem key={employee.id} value={employee.id}>
                                                 {employee.name}
                                             </SelectItem>
                                         ))}
@@ -421,9 +447,9 @@ export default function Calls2Page() {
                 <Card className="border-border bg-card">
                     <CardContent className="py-16 text-center">
                         <Phone className="mx-auto mb-4 h-16 w-16 text-muted-foreground opacity-50" />
-                        <h3 className="mb-2 text-lg font-medium text-foreground">Recording topilmadi</h3>
+                        <h3 className="mb-2 text-lg font-medium text-foreground">Qo&apos;ng&apos;iroq topilmadi</h3>
                         <p className="mx-auto max-w-md text-muted-foreground">
-                            Hozircha `download_url` bor bo&rsquo;lgan call yozuvlari chiqmagan.
+                            Tanlangan filtr bo&apos;yicha qo&apos;ng&apos;iroqlar topilmadi.
                         </p>
                     </CardContent>
                 </Card>
@@ -433,8 +459,8 @@ export default function Calls2Page() {
                         <div className="flex items-center justify-between border-b border-border p-4">
                             <h2 className="text-lg font-semibold text-foreground">
                                 {selectedEmployee
-                                    ? `${selectedEmployee.name} uchun ${filteredRecordings.length} ta recording`
-                                    : `Oxirgi ${filteredRecordings.length} ta recording`}
+                                    ? `${selectedEmployee.name} uchun ${totalCount} ta recording`
+                                    : `${totalCount} ta recording`}
                             </h2>
                         </div>
 
@@ -456,11 +482,12 @@ export default function Calls2Page() {
                                 {filteredRecordings.map((call, index) => {
                                     const date = new Date(call.called_at);
                                     const isIncoming = call.direction === "incoming";
+                                    const rowNumber = (currentPage - 1) * PAGE_SIZE + index + 1;
 
                                     return (
                                         <TableRow key={call.id} className="hover:bg-accent/50">
                                             <TableCell className="font-medium text-muted-foreground">
-                                                {index + 1}
+                                                {rowNumber}
                                             </TableCell>
                                             <TableCell>{call.caller || "-"}</TableCell>
                                             <TableCell>{call.callee || "-"}</TableCell>
@@ -494,7 +521,7 @@ export default function Calls2Page() {
                                                     variant="outline"
                                                     className={call.answered ? "border-green-500/50 text-green-500" : "border-red-500/50 text-red-500"}
                                                 >
-                                                    {call.answered ? "Javob berildi" : "Javobsiz"}
+                                                    {getCallStatusLabel(call)}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell>
@@ -524,6 +551,62 @@ export default function Calls2Page() {
                                 })}
                             </TableBody>
                         </Table>
+
+                        {totalPages > 1 && (
+                            <div className="flex items-center justify-between border-t border-border p-4">
+                                <p className="text-sm text-muted-foreground">
+                                    {(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, totalCount)} / {totalCount}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                                        disabled={currentPage === 1 || isFetching}
+                                    >
+                                        <ChevronLeft className="h-4 w-4" />
+                                    </Button>
+                                    <div className="flex items-center gap-1">
+                                        {Array.from({ length: Math.min(5, totalPages) }, (_, index) => {
+                                            let pageNumber = index + 1;
+
+                                            if (totalPages > 5) {
+                                                if (currentPage <= 3) {
+                                                    pageNumber = index + 1;
+                                                } else if (currentPage >= totalPages - 2) {
+                                                    pageNumber = totalPages - 4 + index;
+                                                } else {
+                                                    pageNumber = currentPage - 2 + index;
+                                                }
+                                            }
+
+                                            return (
+                                                <Button
+                                                    key={pageNumber}
+                                                    variant={currentPage === pageNumber ? "default" : "outline"}
+                                                    size="icon"
+                                                    className="h-8 w-8"
+                                                    onClick={() => setCurrentPage(pageNumber)}
+                                                    disabled={isFetching}
+                                                >
+                                                    {pageNumber}
+                                                </Button>
+                                            );
+                                        })}
+                                    </div>
+                                    <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                                        disabled={currentPage === totalPages || isFetching}
+                                    >
+                                        <ChevronRight className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             )}

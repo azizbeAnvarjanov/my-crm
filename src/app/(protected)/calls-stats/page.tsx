@@ -83,6 +83,7 @@ function StatsCard({
     unanswered,
     duration,
     color,
+    unansweredLabel = "Javob berilmagan",
 }: {
     title: string;
     total: number;
@@ -90,6 +91,7 @@ function StatsCard({
     unanswered: number;
     duration: number;
     color: string;
+    unansweredLabel?: string;
 }) {
     const percentage = total > 0 ? Math.round((answered / total) * 100) : 0;
 
@@ -109,7 +111,7 @@ function StatsCard({
                             <p className="text-lg font-semibold text-green-500">{answered}</p>
                         </div>
                         <div>
-                            <p className="text-xs text-red-500">Javob berilmagan</p>
+                            <p className="text-xs text-red-500">{unansweredLabel}</p>
                             <p className="text-lg font-semibold text-red-500">{unanswered}</p>
                         </div>
                         <div>
@@ -173,6 +175,7 @@ function EmployeeStatsRow({
                     unanswered={stats.incoming.unanswered}
                     duration={stats.incoming.totalDuration}
                     color="#3b82f6"
+                    unansweredLabel="Propushenniy"
                 />
                 <StatsCard
                     title="Chiquvchi"
@@ -203,7 +206,6 @@ export default function CallsStatsPage() {
                 .from("xodimlar")
                 .select("id, name, role, user_id, employee_id")
                 .eq("role", "manager")
-                .not("user_id", "is", null)
                 .order("name", { ascending: true });
 
             if (error) throw error;
@@ -212,8 +214,8 @@ export default function CallsStatsPage() {
                 id: String(manager.id),
                 name: manager.name,
                 role: manager.role,
-                user_id: manager.user_id || undefined,
-                employee_id: manager.employee_id || undefined,
+                user_id: manager.user_id ? String(manager.user_id) : undefined,
+                employee_id: manager.employee_id ? String(manager.employee_id) : undefined,
             })) as Employee[];
         },
         enabled: isAdmin,

@@ -29,7 +29,7 @@ import { Lead, Stage } from "@/hooks/use-pipeline";
 import { useTasksByLead, useCreateTask, useUpdateTask, useDeleteTask, useToggleTaskStatus, TASK_TYPES, TaskType } from "@/hooks/use-tasks";
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
-import { Call, normalizeCallRow } from "@/hooks/use-calls";
+import { Call, getCallStatusLabel, normalizeCallRow } from "@/hooks/use-calls";
 import {
     Dialog,
     DialogContent,
@@ -162,7 +162,6 @@ export function LeadSheet({
                 .from("calls")
                 .select("*")
                 .or(phoneFilters.join(","))
-                .not("download_url", "is", null)
                 .order("called_at", { ascending: false })
                 .limit(20);
 
@@ -680,12 +679,12 @@ export function LeadSheet({
                                                         {call.answered ? (
                                                             <div className="flex items-center gap-1 text-green-600">
                                                                 <Check className="h-3 w-3" />
-                                                                <span>Javob berildi</span>
+                                                                <span>{getCallStatusLabel(call)}</span>
                                                             </div>
                                                         ) : (
                                                             <div className="flex items-center gap-1 text-red-500">
                                                                 <X className="h-3 w-3" />
-                                                                <span>Javobsiz</span>
+                                                                <span>{getCallStatusLabel(call)}</span>
                                                             </div>
                                                         )}
                                                     </div>

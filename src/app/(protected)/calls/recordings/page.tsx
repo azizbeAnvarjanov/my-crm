@@ -50,6 +50,8 @@ import { Slider } from "@/components/ui/slider";
 import { useEmployee } from "@/hooks/use-employee";
 import { useBranch } from "@/components/app-sidebar";
 import {
+    applyCallParticipantFilter,
+    getCallStatusLabel,
     useCallsEmployees,
     useCallRecordings,
     formatDuration,
@@ -68,6 +70,7 @@ function formatTime(seconds: number): string {
 }
 
 const EMPTY_CALLS: Call[] = [];
+const PAGE_SIZE = 20;
 
 // Audio Player Dialog Component
 function AudioPlayerDialog({
@@ -184,7 +187,7 @@ function AudioPlayerDialog({
                                 : "border-red-500/50 text-red-500"
                                 }`}
                         >
-                            {call.answered ? "Javob berildi" : "Javobsiz"}
+                            {getCallStatusLabel(call)}
                         </Badge>
                         <Badge variant="secondary">
                             {isIncoming ? "Kiruvchi" : "Chiquvchi"}
@@ -305,8 +308,6 @@ export default function CallRecordingsPage() {
 
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
-    const [pageSize, setPageSize] = useState(20);
-
     // Export state
     const [exporting, setExporting] = useState(false);
 
@@ -354,15 +355,15 @@ export default function CallRecordingsPage() {
         endDate,
         participantIds: selectedParticipantIds,
         page: currentPage,
-        pageSize,
-    }), [startDate, endDate, selectedParticipantIds, currentPage, pageSize]);
+        pageSize: PAGE_SIZE,
+    }), [startDate, endDate, selectedParticipantIds, currentPage]);
 
     // Get recordings - now with server-side pagination
     const { data: recordingsResult, isLoading: recordingsLoading } = useCallRecordings(filter);
 
     const recordings = recordingsResult?.data ?? EMPTY_CALLS;
     const totalCount = recordingsResult?.totalCount || 0;
-    const totalPages = Math.ceil(totalCount / pageSize);
+    const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
     // Filter by search query (client-side for current page only)
     const filteredRecordings = useMemo(() => {
@@ -375,7 +376,7 @@ export default function CallRecordingsPage() {
     // Reset page when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [selectedEmployeeId, startDate, endDate, pageSize]);
+    }, [selectedEmployeeId, startDate, endDate]);
 
     // Open player dialog
     const handlePlayClick = (call: Call) => {
@@ -394,14 +395,9 @@ export default function CallRecordingsPage() {
                 .from("calls")
                 .select("*")
                 .order("called_at", { ascending: false })
-                .not("download_url", "is", null);
 
             if (selectedParticipantIds.length > 0) {
-                const participantFilters = selectedParticipantIds.flatMap((participantId) => [
-                    `caller.eq.${participantId}`,
-                    `callee.eq.${participantId}`,
-                ]);
-                query = query.or(participantFilters.join(","));
+                query = applyCallParticipantFilter(query, selectedParticipantIds);
             }
 
             if (startDate) {
@@ -435,7 +431,7 @@ export default function CallRecordingsPage() {
                     date.toLocaleTimeString("uz-UZ"),
                     call.phone,
                     call.direction === "outgoing" ? "Chiquvchi" : "Kiruvchi",
-                    call.answered ? "Javob berildi" : "Javobsiz",
+                    getCallStatusLabel(call),
                     call.duration || 0,
                     call.record_url || "",
                 ];
@@ -634,26 +630,9 @@ export default function CallRecordingsPage() {
                             <h2 className="text-lg font-semibold text-foreground">
                                 {employeeName} - {totalCount} ta yozuv
                             </h2>
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm text-muted-foreground">Ko&rsquo;rsatish:</span>
-                                <Select
-                                    value={pageSize.toString()}
-                                    onValueChange={(v) => {
-                                        setPageSize(Number(v));
-                                        setCurrentPage(1);
-                                    }}
-                                >
-                                    <SelectTrigger className="w-20 h-8 bg-background">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="10">10</SelectItem>
-                                        <SelectItem value="20">20</SelectItem>
-                                        <SelectItem value="50">50</SelectItem>
-                                        <SelectItem value="100">100</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                            <p className="text-sm text-muted-foreground">
+                                Har sahifada {PAGE_SIZE} ta
+                            </p>
                         </div>
 
                         {/* Table */}
@@ -674,7 +653,7 @@ export default function CallRecordingsPage() {
                                 {filteredRecordings.map((call: Call, index: number) => {
                                     const date = new Date(call.called_at);
                                     const isIncoming = call.direction === "incoming";
-                                    const rowNumber = (currentPage - 1) * pageSize + index + 1;
+                                    const rowNumber = (currentPage - 1) * PAGE_SIZE + index + 1;
 
                                     return (
                                         <TableRow key={call.id} className="hover:bg-accent/50">
@@ -709,7 +688,7 @@ export default function CallRecordingsPage() {
                                                         : "border-red-500/50 text-red-500"
                                                         }`}
                                                 >
-                                                    {call.answered ? "Javob berildi" : "Javobsiz"}
+                                                    {getCallStatusLabel(call)}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell>{formatDuration(call.duration)}</TableCell>
@@ -734,7 +713,7 @@ export default function CallRecordingsPage() {
                         {totalPages > 1 && (
                             <div className="flex items-center justify-between p-4 border-t border-border">
                                 <p className="text-sm text-muted-foreground">
-                                    {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, totalCount)} / {totalCount}
+                                    {(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, totalCount)} / {totalCount}
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <Button

@@ -104,6 +104,7 @@ type ParticipantFilterQuery = {
 const CALL_DATE_FIELD = "called_at";
 const INBOUND_DIRECTION = "inbound";
 const OUTBOUND_DIRECTION = "outbound";
+const CALL_PARTICIPANT_FIELDS = ["caller", "callee", "operator_id"] as const;
 
 const EMPTY_STATS: CallStats = {
     totalCalls: 0,
@@ -136,9 +137,37 @@ export function getEmployeeParticipantIds(employee: Pick<Employee, "id" | "user_
     return Array.from(
         new Set(
             [employee.user_id, employee.employee_id, employee.id]
-                .filter((value): value is string => Boolean(value))
-                .map((value) => value.trim())
+                .map((value) => (value == null ? "" : String(value).trim()))
                 .filter(Boolean)
+        )
+    );
+}
+
+function normalizeParticipantIds(participantIds: string[]): string[] {
+    return Array.from(
+        new Set(
+            participantIds
+                .map((participantId) => participantId.trim())
+                .filter(Boolean)
+        )
+    );
+}
+
+export function buildCallParticipantFilters(participantIds: string[]): string[] {
+    return normalizeParticipantIds(participantIds).flatMap((participantId) =>
+        CALL_PARTICIPANT_FIELDS.map((field) => `${field}.eq.${participantId}`)
+    );
+}
+
+export function getCallParticipantValues(
+    call: Pick<RawCallRow, "caller" | "callee" | "operator_id">
+): string[] {
+    return Array.from(
+        new Set(
+            CALL_PARTICIPANT_FIELDS.flatMap((field) => {
+                const value = call[field]?.trim();
+                return value ? [value] : [];
+            })
         )
     );
 }
@@ -192,6 +221,14 @@ export function normalizeCallRow(call: RawCallRow): Call {
     };
 }
 
+export function getCallStatusLabel(call: Pick<Call, "answered" | "direction">): string {
+    if (!call.answered && call.direction === "incoming") {
+        return "Propushenniy";
+    }
+
+    return call.answered ? "Javob berildi" : "Javobsiz";
+}
+
 function applyDateFilter<T>(query: T, baseFilters: BaseFilters): T {
     let nextQuery = query as T & DateFilterQuery;
 
@@ -206,17 +243,14 @@ function applyDateFilter<T>(query: T, baseFilters: BaseFilters): T {
     return nextQuery as T;
 }
 
-function applyParticipantFilter<T>(query: T, participantIds: string[]): T {
-    if (participantIds.length === 0) {
+export function applyCallParticipantFilter<T>(query: T, participantIds: string[]): T {
+    const filters = buildCallParticipantFilters(participantIds);
+
+    if (filters.length === 0) {
         return query;
     }
 
     const filterableQuery = query as T & ParticipantFilterQuery;
-    const filters = participantIds.flatMap((participantId) => [
-        `caller.eq.${participantId}`,
-        `callee.eq.${participantId}`,
-    ]);
-
     return filterableQuery.or(filters.join(",")) as T;
 }
 
@@ -250,7 +284,7 @@ async function fetchCountStats(
 
     const buildCountQuery = (direction?: string, answered?: boolean) => {
         let query = applyDateFilter(
-            applyParticipantFilter(
+            applyCallParticipantFilter(
                 supabase.from("calls").select("*", { count: "exact", head: true }),
                 participantIds
             ),
@@ -300,7 +334,7 @@ async function fetchCountStats(
 
     if (answeredCalls > 0) {
         const totalDurationQuery = applyDateFilter(
-            applyParticipantFilter(
+            applyCallParticipantFilter(
                 supabase
                     .from("calls")
                     .select("call_duration, dialog_duration")
@@ -315,7 +349,7 @@ async function fetchCountStats(
 
         if (incomingAnswered > 0) {
             const incomingDurationQuery = applyDateFilter(
-                applyParticipantFilter(
+                applyCallParticipantFilter(
                     supabase
                         .from("calls")
                         .select("call_duration, dialog_duration")
@@ -332,7 +366,7 @@ async function fetchCountStats(
 
         if (outgoingAnswered > 0) {
             const outgoingDurationQuery = applyDateFilter(
-                applyParticipantFilter(
+                applyCallParticipantFilter(
                     supabase
                         .from("calls")
                         .select("call_duration, dialog_duration")
@@ -385,7 +419,14 @@ export function useCallsEmployees(branchId: string | null) {
 
             const { data, error } = await query;
             if (error) throw error;
-            return data as Employee[];
+            return (data || []).map((employee) => ({
+                id: String(employee.id),
+                name: employee.name,
+                role: employee.role,
+                user_id: employee.user_id ? String(employee.user_id) : undefined,
+                employee_id: employee.employee_id ? String(employee.employee_id) : undefined,
+                branch_id: employee.branch_id ? String(employee.branch_id) : undefined,
+            })) as Employee[];
         },
         enabled: !!branchId,
     });
@@ -484,9 +525,9 @@ export function useCallsExport(filter: CallsFilter) {
             query = applyDateFilter(query, getDateRangeFilters(filter));
 
             if (filter.participantIds?.length) {
-                query = applyParticipantFilter(query, filter.participantIds);
+                query = applyCallParticipantFilter(query, filter.participantIds);
             } else if (filter.employeeId) {
-                query = applyParticipantFilter(query, [filter.employeeId]);
+                query = applyCallParticipantFilter(query, [filter.employeeId]);
             }
 
             const { data, error } = await query;
@@ -544,42 +585,62 @@ export interface CallRecordingsResult {
     totalCount: number;
 }
 
+export interface PaginatedCallsFilter {
+    startDate?: string;
+    endDate?: string;
+    participantIds?: string[];
+    page: number;
+    pageSize: number;
+    recordingsOnly?: boolean;
+}
+
+export async function fetchPaginatedCalls(
+    supabase: ReturnType<typeof createClient>,
+    filter: PaginatedCallsFilter
+): Promise<CallRecordingsResult> {
+    const baseFilters = getDateRangeFilters(filter);
+    const participantIds = filter.participantIds ?? [];
+
+    let countQuery = supabase
+        .from("calls")
+        .select("*", { count: "exact", head: true });
+
+    let dataQuery = supabase
+        .from("calls")
+        .select("*")
+        .order(CALL_DATE_FIELD, { ascending: false });
+
+    countQuery = applyDateFilter(applyCallParticipantFilter(countQuery, participantIds), baseFilters);
+    dataQuery = applyDateFilter(applyCallParticipantFilter(dataQuery, participantIds), baseFilters);
+
+    if (filter.recordingsOnly) {
+        countQuery = countQuery.not("download_url", "is", null);
+        dataQuery = dataQuery.not("download_url", "is", null);
+    }
+
+    const from = (filter.page - 1) * filter.pageSize;
+    const to = from + filter.pageSize - 1;
+    dataQuery = dataQuery.range(from, to);
+
+    const [countResult, dataResult] = await Promise.all([countQuery, dataQuery]);
+
+    if (countResult.error) throw countResult.error;
+    if (dataResult.error) throw dataResult.error;
+
+    return {
+        data: (dataResult.data || []).map(normalizeCallRow),
+        totalCount: countResult.count || 0,
+    };
+}
+
 export function useCallRecordings(filter: CallRecordingsFilter) {
     return useQuery({
         queryKey: ["callRecordings", filter],
-        queryFn: async (): Promise<CallRecordingsResult> => {
-            const supabase = createClient();
-            const baseFilters = getDateRangeFilters(filter);
-
-            let countQuery = supabase
-                .from("calls")
-                .select("*", { count: "exact", head: true });
-
-            let dataQuery = supabase
-                .from("calls")
-                .select("*")
-                .order(CALL_DATE_FIELD, { ascending: false });
-
-            countQuery = applyDateFilter(applyParticipantFilter(countQuery, filter.participantIds), baseFilters);
-            dataQuery = applyDateFilter(applyParticipantFilter(dataQuery, filter.participantIds), baseFilters);
-
-            countQuery = countQuery.not("download_url", "is", null);
-            dataQuery = dataQuery.not("download_url", "is", null);
-
-            const from = (filter.page - 1) * filter.pageSize;
-            const to = from + filter.pageSize - 1;
-            dataQuery = dataQuery.range(from, to);
-
-            const [countResult, dataResult] = await Promise.all([countQuery, dataQuery]);
-
-            if (countResult.error) throw countResult.error;
-            if (dataResult.error) throw dataResult.error;
-
-            return {
-                data: (dataResult.data || []).map(normalizeCallRow),
-                totalCount: countResult.count || 0,
-            };
-        },
+        queryFn: async (): Promise<CallRecordingsResult> =>
+            fetchPaginatedCalls(createClient(), {
+                ...filter,
+                recordingsOnly: true,
+            }),
         enabled: filter.participantIds.length > 0,
     });
 }

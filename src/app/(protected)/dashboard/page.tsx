@@ -8,9 +8,12 @@ import {
   useLeadsByStage,
   useEmployeeConversion,
   useLeadsTrend,
+  useCallsTrend,
   useTopCallers,
+  CallsTrendPoint,
   DashboardDateRange,
 } from "@/hooks/use-dashboard-stats";
+import { getEmployeeParticipantIds, useCallsEmployees } from "@/hooks/use-calls";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -132,6 +135,10 @@ export default function DashboardPage() {
   const [trendPeriod, setTrendPeriod] = useState<
     "day" | "week" | "month" | "year"
   >("month");
+  const [callsTrendPeriod, setCallsTrendPeriod] = useState<
+    "day" | "week" | "month" | "year"
+  >("month");
+  const [selectedCallsEmployeeId, setSelectedCallsEmployeeId] = useState("all");
 
   // Date filter state
   type DatePeriod = "all" | "last7" | "last30" | "current_month" | "last_month" | "custom";
@@ -201,13 +208,32 @@ export default function DashboardPage() {
   const hasActivePipeline = activePipelineId.length > 0;
   const showPipelineEmptyState = !!branchId && !pipelinesLoading && !hasPipelines;
   const pipelinePending = !branchId || pipelinesLoading;
+  const { data: callsEmployees = [], isLoading: callsEmployeesLoading } = useCallsEmployees(branchId ?? null);
+  const selectedCallsEmployee = useMemo(
+    () => callsEmployees.find((employee) => employee.id === selectedCallsEmployeeId) ?? null,
+    [callsEmployees, selectedCallsEmployeeId]
+  );
+  const activeCallsEmployeeId = useMemo(
+    () =>
+      selectedCallsEmployeeId === "all" || selectedCallsEmployee
+        ? selectedCallsEmployeeId
+        : "all",
+    [selectedCallsEmployee, selectedCallsEmployeeId]
+  );
+  const selectedCallsParticipantIds = useMemo(
+    () =>
+      selectedCallsEmployee
+        ? getEmployeeParticipantIds(selectedCallsEmployee)
+        : [],
+    [selectedCallsEmployee]
+  );
 
   // Fetch dashboard data
   const {
     data: stats,
     isLoading: statsLoading,
     isFetching: statsFetching,
-  } = useDashboardStats(activePipelineId, dateRange);
+  } = useDashboardStats(activePipelineId, dateRange, branchId ?? null);
   const {
     data: leadsByStage,
     isLoading: stagesLoading,
@@ -236,6 +262,15 @@ export default function DashboardPage() {
     activePipelineId,
   );
   const {
+    data: callsTrend,
+    isLoading: callsTrendLoading,
+    isFetching: callsTrendFetching,
+  } = useCallsTrend(
+    callsTrendPeriod,
+    branchId ?? null,
+    selectedCallsParticipantIds,
+  );
+  const {
     data: topCallers,
     isLoading: callersLoading,
     isFetching: callersFetching,
@@ -248,6 +283,7 @@ export default function DashboardPage() {
     stagesFetching ||
     employeesFetching ||
     trendFetching ||
+    callsTrendFetching ||
     callersFetching;
 
   const showStatsSkeleton =
@@ -256,6 +292,7 @@ export default function DashboardPage() {
   const showTrendLoader =
     !showPipelineEmptyState &&
     (!hasActivePipeline || (trendLoading && !leadsTrend));
+  const showCallsTrendLoader = (!branchId || callsTrendLoading || callsEmployeesLoading) && !callsTrend;
   const showStagesLoader =
     !showPipelineEmptyState &&
     (!hasActivePipeline || (stagesLoading && !leadsByStage));
@@ -265,6 +302,9 @@ export default function DashboardPage() {
     employeesLoading &&
     !employeeConversion;
   const showTopCallersLoader = (!branchId || callersLoading) && !topCallers;
+  const hasCallsTrendData = Boolean(
+    callsTrend?.some((point: CallsTrendPoint) => point.total > 0)
+  );
 
   // Prepare Task Data for Donut Chart
   const taskData = [
@@ -743,6 +783,144 @@ export default function DashboardPage() {
               icon={TrendingUp}
               title="Trend ma'lumoti topilmadi"
               description="Tanlangan pipeline uchun hali lidlar dinamikasi yo'q."
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Calls Trend Chart */}
+      <Card className="border-border/60">
+        <CardHeader className="pb-2">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="space-y-2">
+              <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
+                <PhoneCall className="h-5 w-5 text-violet-500" />
+                Calls Dinamikasi
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {selectedCallsEmployee ? `${selectedCallsEmployee.name} bo&apos;yicha` : "Filial bo&apos;yicha"} kiruvchi va chiquvchi qo&apos;ng&apos;iroqlar
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+              <div className="w-full sm:w-52">
+                <Label className="text-xs text-muted-foreground mb-1.5 block">
+                  Xodim
+                </Label>
+                <Select
+                  value={activeCallsEmployeeId}
+                  onValueChange={setSelectedCallsEmployeeId}
+                  disabled={!branchId || callsEmployeesLoading}
+                >
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="Xodim tanlang" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Barcha xodimlar</SelectItem>
+                    {callsEmployees.map((employee) => (
+                      <SelectItem key={employee.id} value={employee.id}>
+                        {employee.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Tabs
+                value={callsTrendPeriod}
+                onValueChange={(v) => setCallsTrendPeriod(v as typeof callsTrendPeriod)}
+              >
+                <TabsList className="h-8">
+                  <TabsTrigger value="day" className="text-xs px-3 h-7">
+                    Kun
+                  </TabsTrigger>
+                  <TabsTrigger value="week" className="text-xs px-3 h-7">
+                    Hafta
+                  </TabsTrigger>
+                  <TabsTrigger value="month" className="text-xs px-3 h-7">
+                    Oy
+                  </TabsTrigger>
+                  <TabsTrigger value="year" className="text-xs px-3 h-7">
+                    Yil
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!branchId ? (
+            <SectionPlaceholder
+              icon={PhoneCall}
+              title="Filial tanlanmagan"
+              description="Calls dinamikasini ko'rish uchun filial tanlang."
+            />
+          ) : showCallsTrendLoader ? (
+            <SectionPlaceholder
+              icon={PhoneCall}
+              title="Calls dinamikasi yuklanmoqda"
+              description="Qo'ng'iroqlar oqimi tayyorlanmoqda."
+              loading
+            />
+          ) : hasCallsTrendData ? (
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={callsTrend}>
+                <defs>
+                  <linearGradient id="colorInboundCalls" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.26} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.03} />
+                  </linearGradient>
+                  <linearGradient id="colorOutboundCalls" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.24} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.03} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridStrokeColor} />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fill: axisTickColor, fontSize: 12 }}
+                  axisLine={{ stroke: gridStrokeColor }}
+                  tickLine={{ stroke: gridStrokeColor }}
+                />
+                <YAxis
+                  tick={{ fill: axisTickColor, fontSize: 12 }}
+                  axisLine={{ stroke: gridStrokeColor }}
+                  tickLine={{ stroke: gridStrokeColor }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "8px",
+                    color: tooltipLabelColor,
+                  }}
+                  labelStyle={{ color: tooltipLabelColor }}
+                  itemStyle={{ color: tooltipLabelColor }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="incoming"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorInboundCalls)"
+                  name="Kiruvchi"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="outgoing"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorOutboundCalls)"
+                  name="Chiquvchi"
+                />
+                <Legend />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <SectionPlaceholder
+              icon={PhoneCall}
+              title="Calls ma'lumoti topilmadi"
+              description="Tanlangan xodim yoki filial uchun hali qo'ng'iroqlar dinamikasi yo'q."
             />
           )}
         </CardContent>

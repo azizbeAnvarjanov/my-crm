@@ -100,8 +100,8 @@ const navItems: NavItem[] = [
 
     // Analitika
     // { title: "Qo'ng'iroqlar", href: "/calls", icon: PhoneCall, category: "analitika" },
-    { title: "Calls 2", href: "/calls-2", icon: PhoneCall, category: "analitika" },
-    { title: "Calls Stats", href: "/calls-stats", icon: PhoneCall, category: "analitika" },
+    { title: "Qo'ng'iroqlar", href: "/calls", icon: PhoneCall, category: "analitika" },
+    { title: "Qo'ng'iroq statistikasi", href: "/calls-stats", icon: PhoneCall, category: "analitika" },
 
     // Sozlamalar
     { title: "Xodimlar", href: "/employees", icon: Users, category: "sozlamalar" },

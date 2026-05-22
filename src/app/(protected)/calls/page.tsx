@@ -1,14 +1,22 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import {
-    Phone,
+    Clock,
     Download,
     Loader2,
+    Phone,
+    PhoneIncoming,
+    PhoneOutgoing,
+    Play,
+    Pause,
+    Search,
+    SkipBack,
+    SkipForward,
+    Volume2,
     XCircle,
-    X,
-    Headphones,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,356 +29,316 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { useEmployee } from "@/hooks/use-employee";
-import { useBranch } from "@/components/app-sidebar";
 import {
-    useCallsEmployees,
-    useCallsStatsByEmployee,
-    formatDuration,
-    getEmployeeParticipantIds,
-    normalizeCallRow,
-    CallsFilter,
-    EmployeeCallStats,
-} from "@/hooks/use-calls";
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table";
+import { Slider } from "@/components/ui/slider";
+import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
+import { Call, formatDuration, normalizeCallRow } from "@/hooks/use-calls";
 
-// Donut Chart Component
-function DonutChart({
-    answered,
-    unanswered,
-    size = 100,
-}: {
-    answered: number;
-    unanswered: number;
-    size?: number;
-}) {
-    const total = answered + unanswered;
-    const answeredPercent = total > 0 ? (answered / total) * 100 : 0;
-    const radius = 40;
-    const circumference = 2 * Math.PI * radius;
-    const answeredDash = (answeredPercent / 100) * circumference;
-    const unansweredDash = circumference - answeredDash;
+const RECORDINGS_LIMIT = 20;
+const EMPTY_CALLS: Call[] = [];
 
-    return (
-        <svg width={size} height={size} viewBox="0 0 100 100">
-            {/* Background circle (unanswered - red) */}
-            <circle
-                cx="50"
-                cy="50"
-                r={radius}
-                fill="none"
-                stroke="#ef4444"
-                strokeWidth="12"
-                strokeDasharray={circumference}
-                strokeDashoffset={0}
-                transform="rotate(-90 50 50)"
-            />
-            {/* Foreground circle (answered - green) */}
-            <circle
-                cx="50"
-                cy="50"
-                r={radius}
-                fill="none"
-                stroke="#22c55e"
-                strokeWidth="12"
-                strokeDasharray={`${answeredDash} ${unansweredDash}`}
-                strokeDashoffset={0}
-                transform="rotate(-90 50 50)"
-                strokeLinecap="round"
-            />
-        </svg>
-    );
+type ManagerEmployee = {
+    id: number;
+    name: string;
+    role: string;
+    user_id: string | null;
+};
+
+function formatTime(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
 
-// Stats Card Component (Umumiy, Kiruvchi, Chiquvchi)
-function StatsCard({
-    title,
-    total,
-    answered,
-    unanswered,
-    duration,
-    color,
+function AudioPlayerDialog({
+    call,
+    open,
+    onClose,
 }: {
-    title: string;
-    total: number;
-    answered: number;
-    unanswered: number;
-    duration: number;
-    color: string;
+    call: Call | null;
+    open: boolean;
+    onClose: () => void;
 }) {
-    const percentage = total > 0 ? Math.round((answered / total) * 100) : 0;
+    const audioRef = useRef<HTMLAudioElement>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [volume, setVolume] = useState(1);
 
-    return (
-        <Card className="border-border bg-card">
-            <CardContent className="p-4">
-                <h3 className="font-semibold text-foreground mb-4">{title}</h3>
+    const handlePlayPause = () => {
+        if (!audioRef.current) return;
 
-                <div className="flex items-center justify-between">
-                    <div className="space-y-2">
-                        <div>
-                            <p className="text-xs text-blue-500">Jami</p>
-                            <p className="text-xl font-bold text-foreground">{total}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-green-500">Javob berilgan</p>
-                            <p className="text-lg font-semibold text-green-500">{answered}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-red-500">Javob berilmagan</p>
-                            <p className="text-lg font-semibold text-red-500">{unanswered}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-orange-500">Gaplashilgan vaqt</p>
-                            <p className="text-base font-medium text-foreground">{formatDuration(duration)}</p>
-                        </div>
-                    </div>
+        if (isPlaying) {
+            audioRef.current.pause();
+            setIsPlaying(false);
+            return;
+        }
 
-                    <DonutChart answered={answered} unanswered={unanswered} size={90} />
-                </div>
+        audioRef.current.play();
+        setIsPlaying(true);
+    };
 
-                {/* Progress bar */}
-                <div className="mt-4 space-y-1">
-                    <div className="h-2 bg-accent rounded-full overflow-hidden">
-                        <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{ width: `${percentage}%`, backgroundColor: color }}
-                        />
-                    </div>
-                    <p className="text-xs text-right text-muted-foreground">{percentage}%</p>
-                </div>
-            </CardContent>
-        </Card>
-    );
-}
-
-// Employee Row Component
-function EmployeeRow({
-    stats,
-    onRecordingsClick
-}: {
-    stats: EmployeeCallStats;
-    onRecordingsClick: (employeeId: string, employeeName: string) => void;
-}) {
-    return (
-        <div className="space-y-3">
-            {/* Employee Name with Recordings Button */}
-            <div className="flex items-center justify-between border-b border-border pb-2">
-                <h2 className="text-lg font-bold text-foreground">
-                    {stats.employeeName}
-                </h2>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onRecordingsClick(stats.employeeId, stats.employeeName)}
-                    className="gap-2 text-primary hover:text-primary"
-                >
-                    <Headphones className="h-4 w-4" />
-                    Yozuvlarni tinglash
-                </Button>
-            </div>
-
-            {/* Three Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Umumiy */}
-                <StatsCard
-                    title="Umumiy"
-                    total={stats.totalCalls}
-                    answered={stats.answeredCalls}
-                    unanswered={stats.unansweredCalls}
-                    duration={stats.totalDuration}
-                    color="#22c55e"
-                />
-
-                {/* Kiruvchi */}
-                <StatsCard
-                    title="Kiruvchi"
-                    total={stats.incoming.total}
-                    answered={stats.incoming.answered}
-                    unanswered={stats.incoming.unanswered}
-                    duration={stats.incoming.totalDuration}
-                    color="#3b82f6"
-                />
-
-                {/* Chiquvchi */}
-                <StatsCard
-                    title="Chiquvchi"
-                    total={stats.outgoing.total}
-                    answered={stats.outgoing.answered}
-                    unanswered={stats.outgoing.unanswered}
-                    duration={stats.outgoing.totalDuration}
-                    color="#8b5cf6"
-                />
-            </div>
-        </div>
-    );
-}
-
-// Main Page
-export default function CallsPage() {
-    const router = useRouter();
-    const { data: currentEmployee, isLoading: employeeLoading } = useEmployee();
-    const { selectedBranch } = useBranch();
-    const branchId = selectedBranch?.id || null;
-
-    const { data: employees = [], isLoading: employeesLoading } = useCallsEmployees(branchId);
-
-    const isAdmin = currentEmployee?.role === "super-admin";
-
-    // Filter state - default to today
-    const today = new Date().toISOString().split("T")[0];
-
-    const [startDate, setStartDate] = useState(today);
-    const [endDate, setEndDate] = useState(today);
-    const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
-    const [exporting, setExporting] = useState(false);
-
-    // Filter employees to show
-    const filteredEmployees = useMemo(() => {
-        if (selectedEmployeeIds.length === 0) return employees;
-        return employees.filter(e => selectedEmployeeIds.includes(e.id));
-    }, [employees, selectedEmployeeIds]);
-
-    const filter: CallsFilter = useMemo(() => ({
-        startDate,
-        endDate,
-    }), [startDate, endDate]);
-
-    // Get stats by employee
-    const { data: employeeStats = [], isLoading: employeeStatsLoading } = useCallsStatsByEmployee(
-        filter,
-        filteredEmployees
-    );
-
-    // Add employee to filter
-    const addEmployee = (empId: string) => {
-        if (!selectedEmployeeIds.includes(empId)) {
-            setSelectedEmployeeIds([...selectedEmployeeIds, empId]);
+    const handleTimeUpdate = () => {
+        if (audioRef.current) {
+            setCurrentTime(audioRef.current.currentTime);
         }
     };
 
-    // Remove employee from filter
-    const removeEmployee = (empId: string) => {
-        setSelectedEmployeeIds(selectedEmployeeIds.filter(id => id !== empId));
+    const handleLoadedMetadata = () => {
+        if (audioRef.current) {
+            setDuration(audioRef.current.duration);
+        }
     };
 
-    // Navigate to recordings page with employee filter.
-    const handleRecordingsClick = (employeeId: string, employeeName: string) => {
-        router.push(`/calls/recordings?employeeId=${employeeId}&name=${encodeURIComponent(employeeName)}&startDate=${startDate}&endDate=${endDate}`);
+    const handleSeek = (value: number[]) => {
+        if (audioRef.current) {
+            audioRef.current.currentTime = value[0];
+            setCurrentTime(value[0]);
+        }
     };
 
-    // Export to Excel
-    const handleExport = async () => {
-        setExporting(true);
-        try {
+    const handleVolumeChange = (value: number[]) => {
+        if (audioRef.current) {
+            audioRef.current.volume = value[0];
+            setVolume(value[0]);
+        }
+    };
+
+    const handleEnded = () => {
+        setIsPlaying(false);
+        setCurrentTime(0);
+    };
+
+    const handleOpenChange = (nextOpen: boolean) => {
+        if (!nextOpen && audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+        }
+
+        if (!nextOpen) {
+            setIsPlaying(false);
+            setCurrentTime(0);
+            setDuration(0);
+            onClose();
+        }
+    };
+
+    const skip = (seconds: number) => {
+        if (audioRef.current) {
+            audioRef.current.currentTime = Math.max(0, Math.min(duration, currentTime + seconds));
+        }
+    };
+
+    if (!call) return null;
+
+    const date = new Date(call.called_at);
+    const isIncoming = call.direction === "incoming";
+
+    return (
+        <Dialog open={open} onOpenChange={handleOpenChange}>
+            <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center gap-3">
+                        <div className={`rounded-lg p-2 ${isIncoming ? "bg-blue-500/10" : "bg-emerald-500/10"}`}>
+                            {isIncoming ? (
+                                <PhoneIncoming className="h-5 w-5 text-blue-500" />
+                            ) : (
+                                <PhoneOutgoing className="h-5 w-5 text-emerald-500" />
+                            )}
+                        </div>
+                        <div>
+                            <p className="text-lg font-semibold">{call.phone}</p>
+                            <p className="text-sm font-normal text-muted-foreground">
+                                {date.toLocaleDateString("uz-UZ")} • {date.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" })}
+                            </p>
+                        </div>
+                    </DialogTitle>
+                </DialogHeader>
+
+                <div className="space-y-4 pt-4">
+                    <div className="flex items-center gap-2">
+                        <Badge
+                            variant="outline"
+                            className={call.answered ? "border-green-500/50 text-green-500" : "border-red-500/50 text-red-500"}
+                        >
+                            {call.answered ? "Javob berildi" : "Javobsiz"}
+                        </Badge>
+                        <Badge variant="secondary">
+                            {isIncoming ? "Kiruvchi" : "Chiquvchi"}
+                        </Badge>
+                        <Badge variant="outline">
+                            <Clock className="mr-1 h-3 w-3" />
+                            {formatDuration(call.duration)}
+                        </Badge>
+                    </div>
+
+                    {call.record_url ? (
+                        <div className="space-y-4 rounded-xl bg-accent/30 p-4">
+                            <audio
+                                ref={audioRef}
+                                src={call.record_url}
+                                onTimeUpdate={handleTimeUpdate}
+                                onLoadedMetadata={handleLoadedMetadata}
+                                onEnded={handleEnded}
+                            />
+
+                            <div className="space-y-2">
+                                <Slider
+                                    value={[currentTime]}
+                                    max={duration || 100}
+                                    step={0.1}
+                                    onValueChange={handleSeek}
+                                    className="w-full"
+                                />
+                                <div className="flex justify-between text-xs text-muted-foreground">
+                                    <span>{formatTime(currentTime)}</span>
+                                    <span>{formatTime(duration)}</span>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-center gap-4">
+                                <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => skip(-10)}>
+                                    <SkipBack className="h-5 w-5" />
+                                </Button>
+                                <Button variant="default" size="icon" className="h-14 w-14 rounded-full" onClick={handlePlayPause}>
+                                    {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="ml-1 h-6 w-6" />}
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => skip(10)}>
+                                    <SkipForward className="h-5 w-5" />
+                                </Button>
+                            </div>
+
+                            <div className="flex items-center justify-center gap-3">
+                                <Volume2 className="h-4 w-4 text-muted-foreground" />
+                                <Slider
+                                    value={[volume]}
+                                    max={1}
+                                    step={0.1}
+                                    onValueChange={handleVolumeChange}
+                                    className="w-32"
+                                />
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="py-8 text-center text-muted-foreground">
+                            Bu recording uchun audio topilmadi
+                        </div>
+                    )}
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+export default function Calls2Page() {
+    const searchParams = useSearchParams();
+    const { data: currentEmployee, isLoading: employeeLoading } = useEmployee();
+    const [searchQuery, setSearchQuery] = useState("");
+    const [selectedEmployeeId, setSelectedEmployeeId] = useState(searchParams.get("employeeId") || "all");
+    const [selectedCall, setSelectedCall] = useState<Call | null>(null);
+    const [playerOpen, setPlayerOpen] = useState(false);
+
+    const isAdmin = currentEmployee?.role === "super-admin";
+
+    const { data: managers = [], isLoading: managersLoading } = useQuery({
+        queryKey: ["calls2-managers"],
+        queryFn: async () => {
+            const supabase = createClient();
+            const { data, error } = await supabase
+                .from("xodimlar")
+                .select("id, name, role, user_id")
+                .eq("role", "manager")
+                .order("name", { ascending: true });
+
+            if (error) throw error;
+            return (data || []) as ManagerEmployee[];
+        },
+        enabled: isAdmin,
+    });
+
+    const selectedEmployee = useMemo(
+        () => managers.find((employee) => employee.id.toString() === selectedEmployeeId) || null,
+        [managers, selectedEmployeeId]
+    );
+
+    const {
+        data: recordings = EMPTY_CALLS,
+        isLoading: recordingsLoading,
+        refetch,
+        isFetching,
+    } = useQuery({
+        queryKey: ["calls2-recordings", RECORDINGS_LIMIT, selectedEmployee?.user_id || "all"],
+        queryFn: async () => {
             const supabase = createClient();
             let query = supabase
                 .from("calls")
                 .select("*")
-                .order("called_at", { ascending: false });
+                .not("download_url", "is", null)
+                .order("called_at", { ascending: false })
+                .limit(RECORDINGS_LIMIT);
 
-            if (startDate) {
-                query = query.gte("called_at", startDate);
-            }
-            if (endDate) {
-                const end = new Date(endDate);
-                end.setDate(end.getDate() + 1);
-                query = query.lt("called_at", end.toISOString());
+            if (selectedEmployee?.user_id) {
+                query = query.eq("caller", selectedEmployee.user_id);
             }
 
-            // Filter by selected employees or all employees
-            const empsToExport = selectedEmployeeIds.length > 0
-                ? employees.filter(e => selectedEmployeeIds.includes(e.id))
-                : employees;
-            const participantIds = Array.from(
-                new Set(empsToExport.flatMap((employee) => getEmployeeParticipantIds(employee)))
-            );
+            const { data, error } = await query;
 
-            if (participantIds.length > 0) {
-                const participantFilters = participantIds.flatMap((participantId) => [
-                    `caller.eq.${participantId}`,
-                    `callee.eq.${participantId}`,
-                ]);
-                query = query.or(participantFilters.join(","));
-            }
-
-            const { data: calls, error } = await query;
             if (error) throw error;
+            return (data || []).map(normalizeCallRow);
+        },
+        enabled: isAdmin,
+    });
 
-            // Find employee names
-            const employeeMap = new Map<string, string>();
-            employees.forEach((e) => {
-                getEmployeeParticipantIds(e).forEach((participantId) => {
-                    employeeMap.set(participantId, e.name);
-                });
-            });
+    const filteredRecordings = useMemo(() => {
+        if (!searchQuery.trim()) return recordings;
 
-            // Create CSV content
-            const headers = [
-                "Sana",
-                "Vaqt",
-                "Telefon",
-                "Yo'nalish",
-                "Holat",
-                "Davomiyligi (sek)",
-                "Xodim",
-            ];
+        const normalizedQuery = searchQuery.trim().toLowerCase();
+        return recordings.filter((call) =>
+            [
+                call.phone,
+                call.caller || "",
+                call.callee || "",
+                call.operator_id || "",
+            ].some((value) => value.toLowerCase().includes(normalizedQuery))
+        );
+    }, [recordings, searchQuery]);
 
-            const rows = (calls || []).map((rawCall) => {
-                const call = normalizeCallRow(rawCall);
-                const date = new Date(call.called_at);
-                return [
-                    date.toLocaleDateString("uz-UZ"),
-                    date.toLocaleTimeString("uz-UZ"),
-                    call.phone,
-                    call.direction === "outgoing" ? "Chiquvchi" : "Kiruvchi",
-                    call.answered ? "Javob berildi" : "Javobsiz",
-                    call.duration || 0,
-                    employeeMap.get(call.caller || "") || employeeMap.get(call.callee || "") || "",
-                ];
-            });
-
-            const csvContent = [
-                headers.join(","),
-                ...rows.map((row) => row.map((cell) => `"${cell}"`).join(",")),
-            ].join("\n");
-
-            // Add BOM for Excel UTF-8 support
-            const BOM = "\uFEFF";
-            const blob = new Blob([BOM + csvContent], { type: "text/csv;charset=utf-8;" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `qongiroqlar_${startDate}_${endDate}.csv`;
-            link.click();
-            URL.revokeObjectURL(url);
-        } catch (error) {
-            console.error("Export error:", error);
-        } finally {
-            setExporting(false);
-        }
+    const handlePlayClick = (call: Call) => {
+        setSelectedCall(call);
+        setPlayerOpen(true);
     };
 
-    // Loading
-    if (employeeLoading || !branchId) {
+    if (employeeLoading || managersLoading) {
         return (
-            <div className="flex items-center justify-center min-h-screen">
+            <div className="flex min-h-screen items-center justify-center">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
         );
     }
 
-    // Only admin can access
     if (!isAdmin) {
         return (
             <div className="min-h-screen p-6 flex items-center justify-center">
                 <Card className="max-w-md border-border bg-card">
                     <CardContent className="pt-6 text-center">
-                        <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-red-500/10 flex items-center justify-center">
+                        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10">
                             <XCircle className="h-6 w-6 text-red-500" />
                         </div>
-                        <h2 className="text-xl font-semibold text-card-foreground mb-2">
-                            Ruxsat yo&rsquo;q
-                        </h2>
+                        <h2 className="mb-2 text-xl font-semibold text-card-foreground">Ruxsat yo&rsquo;q</h2>
                         <p className="text-muted-foreground">
                             Bu sahifaga faqat admin kirishga ruxsat etilgan.
                         </p>
@@ -381,115 +349,194 @@ export default function CallsPage() {
     }
 
     return (
-        <div className="min-h-screen p-6 lg:p-8 space-y-6">
-            {/* Header */}
-            <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-foreground">Manager Call Analytics</h1>
+        <div className="min-h-screen space-y-6 p-6 lg:p-8">
+            <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-primary/10 p-2">
+                    <Phone className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                    <h1 className="text-2xl font-bold text-foreground">Calls 2</h1>
+                    <p className="text-sm text-muted-foreground">
+                        Calls table ichidan oxirgi {RECORDINGS_LIMIT} ta recording
+                    </p>
+                </div>
             </div>
 
-            {/* Filters */}
             <Card className="border-border bg-card">
-                <CardContent className="px-4">
-                    <div className="flex flex-wrap items-center gap-4">
-                        {/* Employee Multi-Select */}
-                        <div className="flex-1 min-w-[300px]">
-                            <div className="flex flex-wrap items-center gap-2 p-2 border border-border rounded-lg bg-background min-h-[42px]">
-                                {/* Selected employees as tags */}
-                                {selectedEmployeeIds.map(empId => {
-                                    const emp = employees.find(e => e.id === empId);
-                                    if (!emp) return null;
-                                    return (
-                                        <Badge
-                                            key={empId}
-                                            variant="secondary"
-                                            className="flex items-center gap-1 pr-1"
-                                        >
-                                            {emp.name}
-                                            <button
-                                                onClick={() => removeEmployee(empId)}
-                                                className="ml-1 hover:bg-accent rounded-full p-0.5"
-                                            >
-                                                <X className="h-3 w-3" />
-                                            </button>
-                                        </Badge>
-                                    );
-                                })}
-
-                                {/* Add employee dropdown */}
-                                <Select onValueChange={addEmployee} value="">
-                                    <SelectTrigger className="w-auto border-0 shadow-none h-7 px-2 bg-transparent">
-                                        <SelectValue placeholder={selectedEmployeeIds.length === 0 ? "Xodim tanlang..." : "+"} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {employees
-                                            .filter(e => !selectedEmployeeIds.includes(e.id))
-                                            .map((emp) => (
-                                                <SelectItem key={emp.id} value={emp.id}>
-                                                    {emp.name}
-                                                </SelectItem>
-                                            ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                <CardContent className="p-4">
+                    <div className="flex flex-wrap items-end gap-4">
+                        <div className="min-w-[240px] space-y-1.5">
+                            <label className="text-sm text-muted-foreground">Xodim</label>
+                            <Select value={selectedEmployeeId} onValueChange={setSelectedEmployeeId}>
+                                <SelectTrigger className="w-full bg-background border-border">
+                                    <SelectValue placeholder="Manager tanlang" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Barchasi</SelectItem>
+                                    {managers
+                                        .filter((employee) => employee.user_id)
+                                        .map((employee) => (
+                                            <SelectItem key={employee.id} value={employee.id.toString()}>
+                                                {employee.name}
+                                            </SelectItem>
+                                        ))}
+                                </SelectContent>
+                            </Select>
                         </div>
 
-                        {/* Date Range */}
-                        <div className="flex items-center gap-2">
+                        <div className="min-w-[240px] flex-1 space-y-1.5">
+                            <label className="flex items-center gap-1 text-sm text-muted-foreground">
+                                <Search className="h-3.5 w-3.5" />
+                                Qidirish
+                            </label>
                             <Input
-                                type="date"
-                                value={startDate}
-                                onChange={(e) => setStartDate(e.target.value)}
-                                className="w-36 bg-background border-border"
-                            />
-                            <Input
-                                type="date"
-                                value={endDate}
-                                onChange={(e) => setEndDate(e.target.value)}
-                                className="w-36 bg-background border-border"
+                                type="text"
+                                placeholder="Telefon, caller, callee..."
+                                value={searchQuery}
+                                onChange={(event) => setSearchQuery(event.target.value)}
+                                className="bg-background border-border"
                             />
                         </div>
 
-                        {/* Export Button */}
-                        <Button
-                            onClick={handleExport}
-                            disabled={exporting}
-                            className="bg-blue-600 hover:bg-blue-700 text-white"
-                        >
-                            {exporting ? (
-                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        <Button onClick={() => refetch()} variant="outline" className="gap-2" disabled={isFetching}>
+                            {isFetching ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                                <Download className="h-4 w-4 mr-2" />
+                                <Download className="h-4 w-4" />
                             )}
-                            Excel
+                            Yangilash
                         </Button>
                     </div>
                 </CardContent>
             </Card>
 
-            {/* Employee Stats */}
-            {employeesLoading || employeeStatsLoading ? (
-                <div className="flex justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            {recordingsLoading ? (
+                <div className="flex justify-center py-16">
+                    <div className="text-center">
+                        <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-primary" />
+                        <p className="text-muted-foreground">Recordinglar yuklanmoqda...</p>
+                    </div>
                 </div>
-            ) : employeeStats.length === 0 ? (
-                <div className="text-center py-12">
-                    <Phone className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-medium mb-2">Ma&rsquo;lumot topilmadi</h3>
-                    <p className="text-muted-foreground">
-                        Tanlangan davr uchun qo&rsquo;ng&rsquo;iroq ma&rsquo;lumotlari yo&rsquo;q
-                    </p>
-                </div>
+            ) : filteredRecordings.length === 0 ? (
+                <Card className="border-border bg-card">
+                    <CardContent className="py-16 text-center">
+                        <Phone className="mx-auto mb-4 h-16 w-16 text-muted-foreground opacity-50" />
+                        <h3 className="mb-2 text-lg font-medium text-foreground">Recording topilmadi</h3>
+                        <p className="mx-auto max-w-md text-muted-foreground">
+                            Hozircha `download_url` bor bo&rsquo;lgan call yozuvlari chiqmagan.
+                        </p>
+                    </CardContent>
+                </Card>
             ) : (
-                <div className="space-y-8">
-                    {employeeStats.map((stats) => (
-                        <EmployeeRow
-                            key={stats.employeeId}
-                            stats={stats}
-                            onRecordingsClick={handleRecordingsClick}
-                        />
-                    ))}
-                </div>
+                <Card className="border-border bg-card">
+                    <CardContent className="p-0">
+                        <div className="flex items-center justify-between border-b border-border p-4">
+                            <h2 className="text-lg font-semibold text-foreground">
+                                {selectedEmployee
+                                    ? `${selectedEmployee.name} uchun ${filteredRecordings.length} ta recording`
+                                    : `Oxirgi ${filteredRecordings.length} ta recording`}
+                            </h2>
+                        </div>
+
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead className="w-12">#</TableHead>
+                                    <TableHead>Caller</TableHead>
+                                    <TableHead>Callee</TableHead>
+                                    <TableHead>Telefon</TableHead>
+                                    <TableHead>Sana</TableHead>
+                                    <TableHead>Yo&rsquo;nalish</TableHead>
+                                    <TableHead>Davomiylik</TableHead>
+                                    <TableHead>Holat</TableHead>
+                                    <TableHead className="w-24 text-center">Audio</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {filteredRecordings.map((call, index) => {
+                                    const date = new Date(call.called_at);
+                                    const isIncoming = call.direction === "incoming";
+
+                                    return (
+                                        <TableRow key={call.id} className="hover:bg-accent/50">
+                                            <TableCell className="font-medium text-muted-foreground">
+                                                {index + 1}
+                                            </TableCell>
+                                            <TableCell>{call.caller || "-"}</TableCell>
+                                            <TableCell>{call.callee || "-"}</TableCell>
+                                            <TableCell className="font-medium">{call.phone}</TableCell>
+                                            <TableCell>
+                                                <div className="text-sm">
+                                                    <div>{date.toLocaleDateString("uz-UZ")}</div>
+                                                    <div className="text-muted-foreground">
+                                                        {date.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" })}
+                                                    </div>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex items-center gap-2">
+                                                    {isIncoming ? (
+                                                        <>
+                                                            <PhoneIncoming className="h-4 w-4 text-blue-500" />
+                                                            <span className="text-blue-500">Kiruvchi</span>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <PhoneOutgoing className="h-4 w-4 text-emerald-500" />
+                                                            <span className="text-emerald-500">Chiquvchi</span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>{formatDuration(call.duration)}</TableCell>
+                                            <TableCell>
+                                                <Badge
+                                                    variant="outline"
+                                                    className={call.answered ? "border-green-500/50 text-green-500" : "border-red-500/50 text-red-500"}
+                                                >
+                                                    {call.answered ? "Javob berildi" : "Javobsiz"}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8 text-primary hover:bg-primary/10 hover:text-primary"
+                                                        onClick={() => handlePlayClick(call)}
+                                                    >
+                                                        <Play className="h-4 w-4" />
+                                                    </Button>
+                                                    <Button
+                                                        asChild
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8"
+                                                    >
+                                                        <a href={call.record_url || "#"} target="_blank" rel="noreferrer">
+                                                            <Download className="h-4 w-4" />
+                                                        </a>
+                                                    </Button>
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })}
+                            </TableBody>
+                        </Table>
+                    </CardContent>
+                </Card>
             )}
+
+            <AudioPlayerDialog
+                key={selectedCall?.id || "empty"}
+                call={selectedCall}
+                open={playerOpen}
+                onClose={() => {
+                    setPlayerOpen(false);
+                    setSelectedCall(null);
+                }}
+            />
         </div>
     );
 }

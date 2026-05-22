@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { getEmployeeParticipantIds } from "@/hooks/use-calls";
 import { createClient } from "@/lib/supabase/client";
 
 // Dashboard statistikasi turlarini belgilaymiz
@@ -64,6 +65,10 @@ type DateRangeQuery<T> = {
     lte: (column: string, value: string) => T;
 };
 
+type ParticipantFilterQuery<T> = {
+    or: (filters: string) => T;
+};
+
 const dashboardKeys = {
     all: ["dashboard-stats"] as const,
     stats: (pipelineId?: string, dateRange?: DashboardDateRange) => [...dashboardKeys.all, "stats", pipelineId, dateRange?.startDate, dateRange?.endDate] as const,
@@ -81,6 +86,17 @@ function applyDateRange<T extends DateRangeQuery<T>>(query: T, dateRange?: Dashb
     query = query.gte(dateField, `${dateRange.startDate}T00:00:00.000Z`);
     query = query.lte(dateField, `${dateRange.endDate}T23:59:59.999Z`);
     return query;
+}
+
+function applyParticipantFilter<T extends ParticipantFilterQuery<T>>(query: T, participantIds: string[]) {
+    if (participantIds.length === 0) return query;
+
+    const filters = participantIds.flatMap((participantId) => [
+        `caller.eq.${participantId}`,
+        `callee.eq.${participantId}`,
+    ]);
+
+    return query.or(filters.join(","));
 }
 
 // Asosiy dashboard statistikasi (pipeline + sana filtri bo'yicha)
@@ -313,7 +329,8 @@ export function useEmployeeConversion(conversionStageId?: string) {
 
             const { data: employees, error: empError } = await supabase
                 .from("xodimlar")
-                .select("id, name");
+                .select("id, name, role")
+                .eq("role", "manager");
 
             if (empError) throw empError;
             if (!employees?.length) return [];
@@ -376,45 +393,92 @@ export function useTopCallers(branchId: string | null, dateRange?: DashboardDate
         queryFn: async () => {
             if (!branchId) return [];
 
-            // 1. Branchdagi xodimlarni olamiz
             const { data: employees, error: empError } = await supabase
                 .from("xodimlar")
-                .select("name, employee_id, user_id")
-                .eq("branch_id", branchId)
-                .not("employee_id", "is", null)
-                .not("user_id", "is", null);
+                .select("id, name, employee_id, user_id")
+                .eq("branch_id", branchId);
 
             if (empError) throw empError;
             if (!employees?.length) return [];
 
-            const userIds = employees.map((employee) => employee.user_id).filter(Boolean);
-            if (!userIds.length) return [];
+            const employeesWithParticipants = employees
+                .map((employee) => ({
+                    id: String(employee.id),
+                    name: employee.name,
+                    participantIds: getEmployeeParticipantIds({
+                        id: String(employee.id),
+                        user_id: employee.user_id ?? undefined,
+                        employee_id: employee.employee_id ?? undefined,
+                    }),
+                }))
+                .filter((employee) => employee.participantIds.length > 0);
 
-            let callsQuery = supabase
-                .from("calls")
-                .select("user_id")
-                .in("user_id", userIds);
-            callsQuery = applyDateRange(callsQuery, dateRange);
+            if (!employeesWithParticipants.length) return [];
+
+            const allParticipantIds = Array.from(
+                new Set(
+                    employeesWithParticipants.flatMap((employee) => employee.participantIds)
+                )
+            );
+
+            let callsQuery = applyParticipantFilter(
+                supabase
+                    .from("calls")
+                    .select("caller, callee"),
+                allParticipantIds
+            );
+            callsQuery = applyDateRange(callsQuery, dateRange, "called_at");
 
             const { data: calls, error: callsError } = await callsQuery;
             if (callsError) throw callsError;
 
-            const callCounts = new Map<string, number>();
-            for (const call of calls ?? []) {
-                callCounts.set(call.user_id, (callCounts.get(call.user_id) ?? 0) + 1);
+            const participantToEmployeeIds = new Map<string, string[]>();
+            for (const employee of employeesWithParticipants) {
+                for (const participantId of employee.participantIds) {
+                    const existingEmployeeIds = participantToEmployeeIds.get(participantId) ?? [];
+                    existingEmployeeIds.push(employee.id);
+                    participantToEmployeeIds.set(participantId, existingEmployeeIds);
+                }
             }
 
-            const results: TopCaller[] = employees.map((employee) => ({
-                employee_id: employee.user_id,
+            const callCounts = new Map<string, number>();
+            for (const employee of employeesWithParticipants) {
+                callCounts.set(employee.id, 0);
+            }
+
+            for (const call of calls ?? []) {
+                const matchedEmployeeIds = new Set<string>();
+
+                for (const participantId of [call.caller, call.callee]) {
+                    if (!participantId) continue;
+
+                    const employeeIds = participantToEmployeeIds.get(participantId);
+                    if (!employeeIds?.length) continue;
+
+                    employeeIds.forEach((employeeId) => matchedEmployeeIds.add(employeeId));
+                }
+
+                matchedEmployeeIds.forEach((employeeId) => {
+                    callCounts.set(employeeId, (callCounts.get(employeeId) ?? 0) + 1);
+                });
+            }
+
+            const results: TopCaller[] = employeesWithParticipants.map((employee) => ({
+                employee_id: employee.id,
                 employee_name: employee.name,
-                call_count: callCounts.get(employee.user_id) ?? 0,
+                call_count: callCounts.get(employee.id) ?? 0,
             }));
 
-            // 3. Formatlash — faqat qo'ng'iroq qilganlarni ko'rsatamiz
             return results
-                .filter(r => r.call_count > 0)
-                .sort((a, b) => b.call_count - a.call_count)
-                .slice(0, 5); // Top 5
+                .filter((result) => result.call_count > 0)
+                .sort((left, right) => {
+                    if (right.call_count !== left.call_count) {
+                        return right.call_count - left.call_count;
+                    }
+
+                    return left.employee_name.localeCompare(right.employee_name);
+                })
+                .slice(0, 5);
         },
         enabled: !!branchId,
         placeholderData: keepPreviousData,

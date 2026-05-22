@@ -188,12 +188,9 @@ export default function PipelinesPage() {
                         <Building2 className="h-4 w-4" />
                         <span>{selectedBranch?.name || "Filial"}</span>
                         <ArrowRight className="h-3 w-3" />
-                        <span className="text-foreground">Pipelines</span>
+                        <span className="text-foreground"><span className="text-primary font-medium">{selectedBranch?.name}</span> Voronkalar</span>
                     </div>
-                    <h1 className="text-2xl font-semibold text-foreground">Pipelines</h1>
-                    <p className="mt-1 text-muted-foreground">
-                        <span className="text-primary font-medium">{selectedBranch?.name}</span> filialiga tegishli pipelinelar
-                    </p>
+
                 </div>
 
                 {/* Search */}
@@ -282,16 +279,23 @@ export default function PipelinesPage() {
                     <Building2 className="h-4 w-4" />
                     <span>{selectedBranch?.name || "Filial"}</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span className="text-foreground">Pipelines</span>
+                    <span className="text-foreground">voronkalar</span>
                 </div>
                 <div className="flex items-center justify-between">
                     <div>
-                        <h1 className="text-2xl font-semibold text-foreground">Pipelines</h1>
-                        <p className="mt-1 text-muted-foreground">
-                            <span className="text-primary font-medium">{selectedBranch?.name}</span> filialiga tegishli pipelinelar
-                        </p>
+                        <h1 className="text-2xl font-semibold text-foreground"> <span className="text-primary font-medium">{selectedBranch?.name}</span> voronkalar</h1>
+
                     </div>
                     <div className="flex items-center gap-2">
+                        <div className="relative max-w-md">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                placeholder="Pipeline qidirish..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="pl-10 bg-card border-border text-foreground placeholder:text-muted-foreground"
+                            />
+                        </div>
                         <Button
                             variant="outline"
                             size="icon"
@@ -305,15 +309,13 @@ export default function PipelinesPage() {
                             <DialogTrigger asChild>
                                 <Button className="btn-primary text-primary-foreground">
                                     <Plus className="mr-2 h-4 w-4" />
-                                    Yangi Pipeline
+                                    Yangi voronka
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="bg-card border-border">
                                 <DialogHeader>
-                                    <DialogTitle className="text-card-foreground">Yangi Pipeline yaratish</DialogTitle>
-                                    <DialogDescription className="text-muted-foreground">
-                                        <span className="text-primary font-medium">{selectedBranch?.name}</span> filiali uchun yangi pipeline yarating.
-                                    </DialogDescription>
+                                    <DialogTitle className="text-card-foreground">Yangi voronka yaratish</DialogTitle>
+                                    <DialogDescription className="text-muted-foreground hidden"></DialogDescription>
                                 </DialogHeader>
                                 <div className="space-y-4 py-4">
                                     <div className="space-y-2">
@@ -321,7 +323,7 @@ export default function PipelinesPage() {
                                             Nomi <span className="text-destructive">*</span>
                                         </label>
                                         <Input
-                                            placeholder="Pipeline nomi"
+                                            placeholder="Voronka nomi"
                                             value={newPipelineName}
                                             onChange={(e) => setNewPipelineName(e.target.value)}
                                             className="bg-background border-input text-foreground placeholder:text-muted-foreground"
@@ -363,7 +365,7 @@ export default function PipelinesPage() {
             </div>
 
             {/* Stats */}
-            <div className="grid gap-4 sm:grid-cols-4 mb-6">
+            {/* <div className="grid gap-4 sm:grid-cols-4 mb-6">
                 <Card className="border-border bg-card">
                     <CardContent className="p-4">
                         <div className="flex items-center gap-3">
@@ -422,137 +424,68 @@ export default function PipelinesPage() {
                         </div>
                     </CardContent>
                 </Card>
-            </div>
+            </div> */}
 
             {/* Search */}
             <div className="mb-6">
-                <div className="relative max-w-md">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Pipeline qidirish..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-10 bg-card border-border text-foreground placeholder:text-muted-foreground"
-                    />
-                </div>
+
             </div>
 
-            {/* Pipelines List */}
-            <Card className="border-border bg-card">
-                <CardHeader>
-                    <CardTitle className="text-lg text-card-foreground">Pipelinelar ro'yxati</CardTitle>
-                    <CardDescription className="text-muted-foreground">
-                        {selectedBranch?.name} filialidagi barcha pipelinelar
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {loading || branchLoading ? (
-                        <div className="flex items-center justify-center py-12">
-                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                        </div>
-                    ) : filteredPipelines.length === 0 ? (
-                        <div className="text-center py-12">
-                            <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-accent flex items-center justify-center">
-                                <GitBranch className="h-6 w-6 text-muted-foreground" />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredPipelines.map((pipeline) => (
+                    <div
+                        key={pipeline.id}
+                        className="flex items-center justify-between p-4 rounded-lg bg-background border border-border hover:border-primary/30 transition-colors group"
+                    >
+                        <div
+                            className="flex items-center gap-4 flex-1 cursor-pointer"
+                            onClick={() => handleOpenPipeline(pipeline.id)}
+                        >
+                            <div className="p-2 rounded-md bg-accent group-hover:bg-primary/10 transition-colors">
+                                <GitBranch className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
                             </div>
-                            <h3 className="text-lg font-medium text-foreground mb-1">
-                                {searchQuery ? "Pipeline topilmadi" : "Hozircha pipeline yo'q"}
-                            </h3>
-                            <p className="text-muted-foreground mb-4">
-                                {searchQuery
-                                    ? "Boshqa so'z bilan qidiring"
-                                    : `${selectedBranch?.name} filialida hali pipeline yaratilmagan`}
-                            </p>
-                            {!searchQuery && (
-                                <Button
-                                    onClick={() => setIsCreateDialogOpen(true)}
-                                    className="btn-primary text-primary-foreground"
-                                >
-                                    <Plus className="mr-2 h-4 w-4" />
-                                    Birinchi Pipeline yaratish
-                                </Button>
-                            )}
-                        </div>
-                    ) : (
-                        <div className="space-y-3">
-                            {filteredPipelines.map((pipeline) => (
-                                <div
-                                    key={pipeline.id}
-                                    className="flex items-center justify-between p-4 rounded-lg bg-background border border-border hover:border-primary/30 transition-colors group"
-                                >
-                                    <div
-                                        className="flex items-center gap-4 flex-1 cursor-pointer"
-                                        onClick={() => handleOpenPipeline(pipeline.id)}
-                                    >
-                                        <div className="p-2 rounded-md bg-accent group-hover:bg-primary/10 transition-colors">
-                                            <GitBranch className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center gap-2">
-                                                <p className="font-medium text-foreground">{pipeline.name}</p>
-                                                {getStatusBadge(pipeline.status)}
-                                            </div>
-                                            <p className="text-xs text-muted-foreground mt-1">
-                                                Yaratilgan:{" "}
-                                                {pipeline.created_at
-                                                    ? new Date(pipeline.created_at).toLocaleDateString("uz-UZ", {
-                                                        year: "numeric",
-                                                        month: "short",
-                                                        day: "numeric",
-                                                        hour: "2-digit",
-                                                        minute: "2-digit",
-                                                    })
-                                                    : "Noma'lum"}
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-center gap-2">
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => handleOpenPipeline(pipeline.id)}
-                                            className="border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent"
-                                        >
-                                            <Eye className="mr-2 h-4 w-4" />
-                                            Lidlar
-                                        </Button>
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="text-muted-foreground hover:text-foreground hover:bg-accent"
-                                                >
-                                                    <MoreHorizontal className="h-4 w-4" />
-                                                </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent className="bg-popover border-border">
-                                                <DropdownMenuItem className="text-popover-foreground focus:bg-accent">
-                                                    <Edit2 className="mr-2 h-4 w-4" />
-                                                    Tahrirlash
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem className="text-popover-foreground focus:bg-accent">
-                                                    <Play className="mr-2 h-4 w-4" />
-                                                    Faollashtirish
-                                                </DropdownMenuItem>
-                                                <DropdownMenuSeparator className="bg-border" />
-                                                <DropdownMenuItem
-                                                    onClick={() => handleDeletePipeline(pipeline.id)}
-                                                    className="text-destructive focus:bg-destructive/10 focus:text-destructive"
-                                                >
-                                                    <Trash2 className="mr-2 h-4 w-4" />
-                                                    O'chirish
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
-                                    </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <p className="font-medium text-foreground">{pipeline.name}</p>
                                 </div>
-                            ))}
+                            </div>
                         </div>
-                    )}
-                </CardContent>
-            </Card>
+
+                        <div className="flex items-center gap-2">
+
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="text-muted-foreground hover:text-foreground hover:bg-accent"
+                                    >
+                                        <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent className="bg-popover border-border">
+                                    <DropdownMenuItem className="text-popover-foreground focus:bg-accent">
+                                        <Edit2 className="mr-2 h-4 w-4" />
+                                        Tahrirlash
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem className="text-popover-foreground focus:bg-accent">
+                                        <Play className="mr-2 h-4 w-4" />
+                                        Faollashtirish
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator className="bg-border" />
+                                    <DropdownMenuItem
+                                        onClick={() => handleDeletePipeline(pipeline.id)}
+                                        className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                                    >
+                                        <Trash2 className="mr-2 h-4 w-4" />
+                                        O'chirish
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }

@@ -574,46 +574,54 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Top Callers Section */}
+        {/* Top Employees by Calls */}
         <Card className="border-border/60 w-[60%]">
           <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-amber-500" />
-              <CardTitle className="text-base font-semibold text-foreground">
-                Top Xodimlar (Qo&apos;ng&apos;iroqlar)
-              </CardTitle>
+            <div className="flex items-start gap-2">
+              <Trophy className="mt-0.5 h-5 w-5 text-amber-500" />
+              <div>
+                <CardTitle className="text-base font-semibold text-foreground">
+                  Top xodimlar
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Qo&apos;ng&apos;iroqlar soni bo&apos;yicha
+                </p>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
             {showTopCallersLoader ? (
               <SectionPlaceholder
                 icon={Phone}
-                title="Qo'ng'iroqlar yuklanmoqda"
-                description="Top xodimlar ro'yxati tayyorlanmoqda."
+                title="Top xodimlar yuklanmoqda"
+                description="Qo&apos;ng&apos;iroqlar bo&apos;yicha reyting tayyorlanmoqda."
                 loading
               />
             ) : topCallers && topCallers.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-3">
                 {topCallers.map((caller, index) => (
                   <div
                     key={caller.employee_id}
-                    className="relative flex flex-col items-center justify-center p-4 rounded-xl bg-card border border-border/60 hover:border-primary/30 hover:shadow-md transition-all duration-200"
+                    className="relative flex flex-row-reverse items-center justify-center rounded-xl border border-border/60 bg-card px-2 py-2 text-center transition-all duration-200 hover:border-primary/30 hover:shadow-md"
                   >
-                    {/* Medal/rank badge */}
-                    <div className="absolute -top-2 -right-2 text-lg">
-                      {index === 0
-                        ? "🥇"
-                        : index === 1
-                          ? "🥈"
-                          : index === 2
-                            ? "🥉"
-                            : null}
-                    </div>
-                    <div className="text-2xl font-bold text-purple-500">
+                    <div className="text-2xl font-bold text-purple-500 border w-12 h-10 flex items-center justify-center rounded-lg">
                       {caller.call_count}
                     </div>
                     <div
-                      className="text-sm font-medium text-foreground text-center mt-1 w-full overflow-hidden"
+                      className={`absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${index === 0
+                        ? "bg-amber-500 text-white"
+                        : index === 1
+                          ? "bg-slate-400 text-white"
+                          : index === 2
+                            ? "bg-orange-500 text-white"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                    >
+                      {index + 1}
+                    </div>
+
+                    <div
+                      className="w-full overflow-hidden text-sm font-medium text-foreground"
                       style={{
                         display: "-webkit-box",
                         WebkitLineClamp: 2,
@@ -623,11 +631,6 @@ export default function DashboardPage() {
                     >
                       {caller.employee_name}
                     </div>
-                    {index >= 3 && (
-                      <div className="text-xs text-muted-foreground mt-1">
-                        #{index + 1}
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -637,11 +640,10 @@ export default function DashboardPage() {
                   <Phone className="h-6 w-6 text-muted-foreground" />
                 </div>
                 <p className="text-sm font-medium text-foreground">
-                  Hali qo&apos;ng&apos;iroqlar mavjud emas
+                  Hali faol xodimlar topilmadi
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Qo&apos;ng&apos;iroqlar qo&apos;shilganda bu yerda
-                  ko&apos;rinadi
+                  Qo&apos;ng&apos;iroqlar paydo bo&apos;lgach, top xodimlar shu yerda ko&apos;rinadi
                 </p>
               </div>
             )}

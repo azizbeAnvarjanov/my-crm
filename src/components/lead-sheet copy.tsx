@@ -39,6 +39,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 
+// Helper function to format duration
 function formatDuration(seconds: number): string {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -82,12 +83,14 @@ export function LeadSheet({
 }: LeadSheetProps) {
     const [editedLead, setEditedLead] = useState<Partial<Lead>>({});
     const [hasChanges, setHasChanges] = useState(false);
+    const [loading, setLoading] = useState(false);
     const [calls, setCalls] = useState<Call[]>([]);
     const [loadingCalls, setLoadingCalls] = useState(false);
     const [playingCallId, setPlayingCallId] = useState<string | null>(null);
     const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
     const [audioProgress, setAudioProgress] = useState<{ [key: string]: { current: number; duration: number } }>({});
 
+    // Task management
     const [newTaskText, setNewTaskText] = useState("");
     const [newTaskDate, setNewTaskDate] = useState("");
     const [newTaskTime, setNewTaskTime] = useState("");
@@ -103,11 +106,19 @@ export function LeadSheet({
     const deleteTaskMutation = useDeleteTask();
     const toggleTaskMutation = useToggleTaskStatus();
 
+    // Today's pending tasks
     const today = new Date().toISOString().split("T")[0];
-    const todayPendingTasks = useMemo(() => tasks.filter(t => !t.status && t.date === today), [tasks, today]);
-    const pendingTasks = useMemo(() => tasks.filter(t => !t.status), [tasks]);
-    const completedTasks = useMemo(() => tasks.filter(t => t.status), [tasks]);
+    const todayPendingTasks = useMemo(() => {
+        return tasks.filter(t => !t.status && t.date === today);
+    }, [tasks, today]);
+    const pendingTasks = useMemo(() => {
+        return tasks.filter(t => !t.status);
+    }, [tasks]);
+    const completedTasks = useMemo(() => {
+        return tasks.filter(t => t.status);
+    }, [tasks]);
 
+    // Reset edited lead when lead changes
     useEffect(() => {
         if (lead) {
             setEditedLead({
@@ -125,6 +136,7 @@ export function LeadSheet({
         }
     }, [lead]);
 
+    // Fetch calls when lead changes
     useEffect(() => {
         if (lead?.phone) {
             fetchCalls(lead.phone);
@@ -133,6 +145,7 @@ export function LeadSheet({
         }
     }, [lead?.phone]);
 
+    // Cleanup audio on close
     useEffect(() => {
         return () => {
             if (audioElement) {
@@ -175,15 +188,8 @@ export function LeadSheet({
         }
     };
 
-    // MicroSIP orqali qo'ng'iroq qilish
     const handleCall = (phoneNumber: string) => {
-        let clean = phoneNumber.replace(/[\s\-().]/g, "");
-        if (clean.startsWith("+998")) {
-            clean = clean.slice(4);
-        } else if (clean.startsWith("998")) {
-            clean = clean.slice(3);
-        }
-        window.location.href = `sip:${clean}`;
+        alert(`Qo'ng'iroq qilish test rejimda: ${phoneNumber}`);
     };
 
     const handleFieldChange = (field: keyof Lead, value: any) => {
@@ -212,13 +218,20 @@ export function LeadSheet({
         if (!call.record_url) return;
 
         if (playingCallId === call.id) {
-            if (audioElement) audioElement.pause();
+            // Pause
+            if (audioElement) {
+                audioElement.pause();
+            }
             setPlayingCallId(null);
         } else {
-            if (audioElement) audioElement.pause();
+            // Play new audio
+            if (audioElement) {
+                audioElement.pause();
+            }
 
             const audio = new Audio(call.record_url);
 
+            // Track progress
             audio.ontimeupdate = () => {
                 setAudioProgress(prev => ({
                     ...prev,
@@ -294,7 +307,10 @@ export function LeadSheet({
 
     const handleUncompleteTask = async (taskId: string) => {
         try {
-            await toggleTaskMutation.mutateAsync({ id: taskId, status: false });
+            await toggleTaskMutation.mutateAsync({
+                id: taskId,
+                status: false,
+            });
         } catch (error) {
             console.error("Error:", error);
         }
@@ -325,6 +341,12 @@ export function LeadSheet({
         } catch (error) {
             console.error("Error deleting task:", error);
         }
+    };
+
+    const formatDuration = (seconds: number) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}:${secs.toString().padStart(2, "0")}`;
     };
 
     if (!lead) return null;
@@ -404,7 +426,39 @@ export function LeadSheet({
                                                 variant="outline"
                                                 disabled={!editedLead.phone && !lead?.phone}
                                                 className="flex-shrink-0"
-                                                onClick={() => handleCall(editedLead.phone || lead?.phone || "")}
+                                                onClick={async () => {
+                                                    const phone = editedLead.phone || lead?.phone;
+                                                    if (!phone) return;
+
+                                                    try {
+                                                        setLoading(true);
+
+                                                        const res = await fetch("/api/moizvonki/call", {
+                                                            method: "POST",
+                                                            headers: {
+                                                                "Content-Type": "application/json",
+                                                            },
+                                                            body: JSON.stringify({
+                                                                phone: phone,
+                                                            }),
+                                                        });
+
+                                                        const data = await res.json().catch(() => ({}));
+
+                                                        if (!res.ok || data?.ok === false) {
+                                                            console.error(data);
+                                                            alert("Qo‘ng‘iroq yuborilmadi");
+                                                            return;
+                                                        }
+
+                                                        alert("📞 Qo‘ng‘iroq yuborildi");
+                                                    } catch (err) {
+                                                        console.error(err);
+                                                        alert("Server xatosi");
+                                                    } finally {
+                                                        setLoading(false);
+                                                    }
+                                                }}
                                             >
                                                 <Phone className="h-4 w-4" />
                                             </Button>
@@ -424,13 +478,45 @@ export function LeadSheet({
                                                     placeholder="+998 90 123 45 67"
                                                 />
                                             </div>
-                                            <Button
+                                              <Button
                                                 type="button"
                                                 size="icon"
                                                 variant="outline"
-                                                disabled={!editedLead.phone_2 && !lead?.phone_2}
+                                                disabled={!editedLead.phone && !lead?.phone}
                                                 className="flex-shrink-0"
-                                                onClick={() => handleCall(editedLead.phone_2 || lead?.phone_2 || "")}
+                                                onClick={async () => {
+                                                    const phone = editedLead.phone || lead?.phone;
+                                                    if (!phone) return;
+
+                                                    try {
+                                                        setLoading(true);
+
+                                                        const res = await fetch("/api/moizvonki/call", {
+                                                            method: "POST",
+                                                            headers: {
+                                                                "Content-Type": "application/json",
+                                                            },
+                                                            body: JSON.stringify({
+                                                                phone: phone,
+                                                            }),
+                                                        });
+
+                                                        const data = await res.json().catch(() => ({}));
+
+                                                        if (!res.ok || data?.ok === false) {
+                                                            console.error(data);
+                                                            alert("Qo‘ng‘iroq yuborilmadi");
+                                                            return;
+                                                        }
+
+                                                        alert("📞 Qo‘ng‘iroq yuborildi");
+                                                    } catch (err) {
+                                                        console.error(err);
+                                                        alert("Server xatosi");
+                                                    } finally {
+                                                        setLoading(false);
+                                                    }
+                                                }}
                                             >
                                                 <Phone className="h-4 w-4" />
                                             </Button>
@@ -575,7 +661,11 @@ export function LeadSheet({
 
                         {/* Footer Actions */}
                         <div className="sticky bottom-0 bg-background pt-6 pb-2 border-t mt-8 flex items-center gap-3">
-                            <Button variant="outline" onClick={onClose} className="flex-1">
+                            <Button
+                                variant="outline"
+                                onClick={onClose}
+                                className="flex-1"
+                            >
                                 <X className="h-4 w-4 mr-2" />
                                 Bekor qilish
                             </Button>
@@ -593,9 +683,9 @@ export function LeadSheet({
                             </Button>
                         </div>
                     </div>
-
                     {/* Left Side - Calls & Notes */}
                     <div className="w-2/5 border-r border-border p-6 overflow-y-auto">
+                        {/* TODAY'S URGENT TASKS - shown immediately */}
                         {todayPendingTasks.length > 0 && (
                             <div className="mb-4 p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
                                 <div className="flex items-center gap-2 mb-2">
@@ -667,16 +757,22 @@ export function LeadSheet({
 
                                         return (
                                             <div key={call.id} className="border border-border rounded-lg p-2 space-y-2 hover:bg-accent/30 transition-colors">
+                                                {/* Call Info */}
                                                 <div className="flex items-center justify-between text-xs">
                                                     <div className="flex items-center gap-2">
+                                                        {/* Direction Icon */}
                                                         {call.direction === "incoming" ? (
                                                             <PhoneIncoming className="h-3.5 w-3.5 text-blue-500" />
                                                         ) : (
                                                             <PhoneOutgoing className="h-3.5 w-3.5 text-emerald-500" />
                                                         )}
+
+                                                        {/* Direction Text */}
                                                         <span className={call.direction === "incoming" ? "text-blue-500" : "text-emerald-500"}>
                                                             {call.direction === "incoming" ? "Kiruvchi" : "Chiquvchi"}
                                                         </span>
+
+                                                        {/* Answered Status */}
                                                         {call.answered ? (
                                                             <div className="flex items-center gap-1 text-green-600">
                                                                 <Check className="h-3 w-3" />
@@ -689,6 +785,7 @@ export function LeadSheet({
                                                             </div>
                                                         )}
                                                     </div>
+
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-muted-foreground">
                                                             {date.toLocaleDateString("uz-UZ")}
@@ -699,6 +796,7 @@ export function LeadSheet({
                                                     </div>
                                                 </div>
 
+                                                {/* Audio Player - Simple Inline */}
                                                 {call.record_url && (
                                                     <div className="space-y-1">
                                                         <div className="flex items-center gap-2">
@@ -737,11 +835,13 @@ export function LeadSheet({
                             </TabsContent>
 
                             <TabsContent value="notes" className="flex-1 overflow-y-auto space-y-3">
+                                {/* Add New Task */}
                                 <Card className="border-border">
                                     <CardHeader className="p-3">
                                         <CardTitle className="text-sm">Yangi vazifa</CardTitle>
                                     </CardHeader>
                                     <CardContent className="p-3 pt-0 space-y-2">
+                                        {/* Task Type Select */}
                                         <Select
                                             value={newTaskType}
                                             onValueChange={(v) => setNewTaskType(v as TaskType)}
@@ -808,6 +908,7 @@ export function LeadSheet({
                                     </div>
                                 ) : (
                                     <>
+                                        {/* Pending tasks */}
                                         {pendingTasks.length > 0 && (
                                             <div className="space-y-2">
                                                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Jarayondagi ({pendingTasks.length})</p>
@@ -868,7 +969,11 @@ export function LeadSheet({
                                                                             )}
                                                                             Saqlash
                                                                         </Button>
-                                                                        <Button onClick={() => setEditingTask(null)} variant="outline" size="sm">
+                                                                        <Button
+                                                                            onClick={() => setEditingTask(null)}
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                        >
                                                                             Bekor
                                                                         </Button>
                                                                     </div>
@@ -897,7 +1002,10 @@ export function LeadSheet({
                                                                             <Button
                                                                                 size="icon"
                                                                                 variant="ghost"
-                                                                                onClick={() => { setCompletingTaskId(task.id); setTaskResult(""); }}
+                                                                                onClick={() => {
+                                                                                    setCompletingTaskId(task.id);
+                                                                                    setTaskResult("");
+                                                                                }}
                                                                                 className="h-7 w-7 text-green-600 hover:bg-green-500/10"
                                                                                 title="Bajarildi"
                                                                             >
@@ -929,6 +1037,7 @@ export function LeadSheet({
                                             </div>
                                         )}
 
+                                        {/* Completed tasks */}
                                         {completedTasks.length > 0 && (
                                             <div className="space-y-2">
                                                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bajarilgan ({completedTasks.length})</p>
@@ -980,6 +1089,8 @@ export function LeadSheet({
                             </TabsContent>
                         </Tabs>
                     </div>
+
+
                 </div>
 
                 {/* Task Complete Dialog */}
@@ -987,7 +1098,9 @@ export function LeadSheet({
                     <DialogContent className="bg-card border-border">
                         <DialogHeader>
                             <DialogTitle>Vazifani bajarish</DialogTitle>
-                            <DialogDescription>Vazifa natijasini yozing</DialogDescription>
+                            <DialogDescription>
+                                Vazifa natijasini yozing
+                            </DialogDescription>
                         </DialogHeader>
                         <div className="py-4">
                             <Textarea

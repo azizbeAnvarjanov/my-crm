@@ -80,28 +80,13 @@ export default function LoginPage() {
             <div className="min-h-screen flex items-center justify-center p-4">
                 <div className="w-full max-w-md">
                     {/* Logo */}
-                    <div className="flex justify-center mb-8">
-                        <div className="flex items-center gap-3">
-                            <div className="h-10 w-10 rounded-lg bg-[#3ecf8e] flex items-center justify-center">
-                                <svg
-                                    viewBox="0 0 24 24"
-                                    className="h-6 w-6 text-[#171717]"
-                                    fill="currentColor"
-                                >
-                                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                                </svg>
-                            </div>
-                            <span className="text-2xl font-bold text-white">MY CRM COMPANY</span>
-                        </div>
+                    <div className="flex justify-center mb-8 gap-3 items-center">
+                        <h1 className="text-2xl font-bold text-black bg-[#3ecf8e] px-3 py-1 rounded-tl-2xl rounded-tr-2xl rounded-br-2xl">EASY</h1>
+                        <h1 className="text-2xl font-bold text-white">CRM</h1>
                     </div>
 
-                    <Card className="backdrop-blur-sm bg-transparent border-white/20 shadow-lg ">
-                        <CardHeader className="text-center pb-4">
-                            <CardTitle className="text-xl text-white">MY CRM</CardTitle>
-                            <CardDescription className="text-[#a1a1a1]">
-                                Tizimga kirish uchun email va parolingizni kiriting
-                            </CardDescription>
-                        </CardHeader>
+                    <Card className="backdrop-blur-sm bg-transparent border-white/20 shadow-lg">
+
                         <CardContent className="space-y-4">
 
                             {/* Error Message */}

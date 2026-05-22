@@ -129,7 +129,7 @@ export default function SignUpPage() {
                                 <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
                             </svg>
                         </div>
-                        <span className="text-2xl font-bold text-white">CRM Pro</span>
+                        <span className="text-2xl font-bold text-white">EASY CRM</span>
                     </div>
                 </div>
 
@@ -137,7 +137,7 @@ export default function SignUpPage() {
                     <CardHeader className="text-center pb-4">
                         <CardTitle className="text-xl text-white">Create an account</CardTitle>
                         <CardDescription className="text-[#a1a1a1]">
-                            Get started with CRM Pro for free
+                            Get started with EASY CRM for free
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">

@@ -74,21 +74,44 @@ export interface DashboardDateRange {
     endDate: string;   // ISO string yoki YYYY-MM-DD
 }
 
+export interface DashboardEmployeeScope {
+    employeeId?: string;
+    participantIds?: string[];
+}
+
 type DateRangeQuery<T> = {
     gte: (column: string, value: string) => T;
     lte: (column: string, value: string) => T;
 };
 
+type EmployeeScopeQuery<T> = {
+    eq: (column: string, value: string) => T;
+};
+
 const dashboardKeys = {
     all: ["dashboard-stats"] as const,
-    stats: (pipelineId?: string, branchId?: string | null, dateRange?: DashboardDateRange) =>
-        [...dashboardKeys.all, "stats", pipelineId, branchId, dateRange?.startDate, dateRange?.endDate] as const,
-    leadsByStage: (pipelineId?: string) =>
-        [...dashboardKeys.all, "leads-by-stage", pipelineId] as const,
-    employeeConversion: (pipelineId?: string) =>
-        [...dashboardKeys.all, "employee-conversion", pipelineId] as const,
-    leadsTrend: (period: DashboardTrendPeriod, pipelineId?: string) =>
-        [...dashboardKeys.all, "leads-trend", period, pipelineId] as const,
+    stats: (
+        pipelineId?: string,
+        branchId?: string | null,
+        dateRange?: DashboardDateRange,
+        scope?: DashboardEmployeeScope,
+    ) =>
+        [
+            ...dashboardKeys.all,
+            "stats",
+            pipelineId,
+            branchId,
+            dateRange?.startDate,
+            dateRange?.endDate,
+            scope?.employeeId,
+            scope?.participantIds?.join(","),
+        ] as const,
+    leadsByStage: (pipelineId?: string, employeeId?: string) =>
+        [...dashboardKeys.all, "leads-by-stage", pipelineId, employeeId] as const,
+    employeeConversion: (conversionStageId?: string, employeeId?: string) =>
+        [...dashboardKeys.all, "employee-conversion", conversionStageId, employeeId] as const,
+    leadsTrend: (period: DashboardTrendPeriod, pipelineId?: string, employeeId?: string) =>
+        [...dashboardKeys.all, "leads-trend", period, pipelineId, employeeId] as const,
     callsTrend: (period: DashboardTrendPeriod, branchId?: string | null, participantKey?: string) =>
         [...dashboardKeys.all, "calls-trend", period, branchId, participantKey] as const,
 };
@@ -99,6 +122,20 @@ function applyDateRange<T extends DateRangeQuery<T>>(query: T, dateRange?: Dashb
     query = query.gte(dateField, `${dateRange.startDate}T00:00:00.000Z`);
     query = query.lte(dateField, `${dateRange.endDate}T23:59:59.999Z`);
     return query;
+}
+
+function applyEmployeeScope<T extends EmployeeScopeQuery<T>>(query: T, employeeId?: string) {
+    return employeeId ? query.eq("employee_id", employeeId) : query;
+}
+
+function getScopedParticipantIds(scope?: DashboardEmployeeScope) {
+    return Array.from(
+        new Set(
+            (scope?.participantIds ?? [])
+                .map((participantId) => participantId.trim())
+                .filter(Boolean)
+        )
+    );
 }
 
 function getTrendConfig(period: DashboardTrendPeriod) {
@@ -205,11 +242,14 @@ export function useDashboardStats(
     pipelineId?: string,
     dateRange?: DashboardDateRange,
     branchId?: string | null,
+    scope?: DashboardEmployeeScope,
 ) {
     const supabase = createClient();
+    const scopedEmployeeId = scope?.employeeId;
+    const scopedParticipantIds = getScopedParticipantIds(scope);
 
     return useQuery({
-        queryKey: dashboardKeys.stats(pipelineId, branchId, dateRange),
+        queryKey: dashboardKeys.stats(pipelineId, branchId, dateRange, scope),
         queryFn: async () => {
             if (!pipelineId) {
                 return {
@@ -277,6 +317,17 @@ export function useDashboardStats(
                 updatedMonthQuery = updatedMonthQuery.eq("pipeline_id", pipelineId);
             }
 
+            if (scopedEmployeeId) {
+                totalLeadsQuery = applyEmployeeScope(totalLeadsQuery, scopedEmployeeId);
+                todayLeadsQuery = applyEmployeeScope(todayLeadsQuery, scopedEmployeeId);
+                weekLeadsQuery = applyEmployeeScope(weekLeadsQuery, scopedEmployeeId);
+                monthLeadsQuery = applyEmployeeScope(monthLeadsQuery, scopedEmployeeId);
+                yearLeadsQuery = applyEmployeeScope(yearLeadsQuery, scopedEmployeeId);
+                updatedTodayQuery = applyEmployeeScope(updatedTodayQuery, scopedEmployeeId);
+                updatedWeekQuery = applyEmployeeScope(updatedWeekQuery, scopedEmployeeId);
+                updatedMonthQuery = applyEmployeeScope(updatedMonthQuery, scopedEmployeeId);
+            }
+
             // Tasks statistikasi (count bilan — dateRange bilan filtrlanadi)
             let totalTasksQ = supabase.from("tasks").select("*", { count: "exact", head: true });
             let completedTasksQ = supabase.from("tasks").select("*", { count: "exact", head: true }).eq("status", true);
@@ -294,6 +345,15 @@ export function useDashboardStats(
                 upcomingTasksQ = upcomingTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
             }
 
+            if (scopedEmployeeId) {
+                totalTasksQ = applyEmployeeScope(totalTasksQ, scopedEmployeeId);
+                completedTasksQ = applyEmployeeScope(completedTasksQ, scopedEmployeeId);
+                pendingTasksQ = applyEmployeeScope(pendingTasksQ, scopedEmployeeId);
+                overdueTasksQ = applyEmployeeScope(overdueTasksQ, scopedEmployeeId);
+                todayTasksQ = applyEmployeeScope(todayTasksQ, scopedEmployeeId);
+                upcomingTasksQ = applyEmployeeScope(upcomingTasksQ, scopedEmployeeId);
+            }
+
             // Qo'ng'iroqlar (dateRange bilan)
             let totalCallsQ = supabase.from("calls").select("*", { count: "exact", head: true });
             let callsTodayQ = supabase.from("calls").select("*", { count: "exact", head: true }).gte("called_at", today.toISOString());
@@ -304,6 +364,21 @@ export function useDashboardStats(
                 callsTodayQ = applyDateRange(callsTodayQ, dateRange, "called_at");
                 callsWeekQ = applyDateRange(callsWeekQ, dateRange, "called_at");
             }
+
+            if (scopedParticipantIds.length > 0) {
+                totalCallsQ = applyCallParticipantFilter(totalCallsQ, scopedParticipantIds);
+                callsTodayQ = applyCallParticipantFilter(callsTodayQ, scopedParticipantIds);
+                callsWeekQ = applyCallParticipantFilter(callsWeekQ, scopedParticipantIds);
+            }
+
+            let unassignedLeadsQuery = supabase
+                .from("leads")
+                .select("*", { count: "exact", head: true })
+                .eq("pipeline_id", pipelineId);
+
+            unassignedLeadsQuery = scopedEmployeeId
+                ? unassignedLeadsQuery.eq("employee_id", scopedEmployeeId).is("employee_id", null)
+                : unassignedLeadsQuery.is("employee_id", null);
 
             const [
                 { count: total_leads },
@@ -342,11 +417,7 @@ export function useDashboardStats(
                 totalCallsQ,
                 callsTodayQ,
                 callsWeekQ,
-                supabase
-                    .from("leads")
-                    .select("*", { count: "exact", head: true })
-                    .eq("pipeline_id", pipelineId)
-                    .is("employee_id", null),
+                unassignedLeadsQuery,
             ]);
 
             return {
@@ -376,13 +447,20 @@ export function useDashboardStats(
 }
 
 // Stage bo'yicha lidlar (pipeline bo'yicha)
-export function useLeadsByStage(pipelineId?: string) {
+export function useLeadsByStage(pipelineId?: string, employeeId?: string) {
     const supabase = createClient();
 
     return useQuery({
-        queryKey: dashboardKeys.leadsByStage(pipelineId),
+        queryKey: dashboardKeys.leadsByStage(pipelineId, employeeId),
         queryFn: async () => {
             if (!pipelineId) return [];
+
+            let leadsQuery = supabase
+                .from("leads")
+                .select("stage_id")
+                .eq("pipeline_id", pipelineId);
+
+            leadsQuery = applyEmployeeScope(leadsQuery, employeeId);
 
             const [{ data: stages, error: stagesError }, { data: leads, error: leadsError }] =
                 await Promise.all([
@@ -390,10 +468,7 @@ export function useLeadsByStage(pipelineId?: string) {
                         .from("stages")
                         .select("id, name")
                         .eq("pipeline_id", pipelineId),
-                    supabase
-                        .from("leads")
-                        .select("stage_id")
-                        .eq("pipeline_id", pipelineId),
+                    leadsQuery,
                 ]);
 
             if (stagesError) throw stagesError;
@@ -424,18 +499,23 @@ export function useLeadsByStage(pipelineId?: string) {
 }
 
 // Xodimlar konversiyasi (barcha xodimlar)
-export function useEmployeeConversion(conversionStageId?: string) {
+export function useEmployeeConversion(conversionStageId?: string, employeeId?: string) {
     const supabase = createClient();
 
     return useQuery({
-        queryKey: ["employee-conversion", conversionStageId],
+        queryKey: dashboardKeys.employeeConversion(conversionStageId, employeeId),
         queryFn: async () => {
             if (!conversionStageId) return [];
 
-            const { data: employees, error: empError } = await supabase
+            let employeesQuery = supabase
                 .from("xodimlar")
-                .select("id, name, role")
-                .eq("role", "manager");
+                .select("id, name, role");
+
+            employeesQuery = employeeId
+                ? employeesQuery.eq("id", employeeId)
+                : employeesQuery.eq("role", "manager");
+
+            const { data: employees, error: empError } = await employeesQuery;
 
             if (empError) throw empError;
             if (!employees?.length) return [];
@@ -578,11 +658,11 @@ export function useTopCallers(branchId: string | null, dateRange?: DashboardDate
 }
 
 // Leads trend (pipeline bo'yicha)
-export function useLeadsTrend(period: DashboardTrendPeriod, pipelineId?: string) {
+export function useLeadsTrend(period: DashboardTrendPeriod, pipelineId?: string, employeeId?: string) {
     const supabase = createClient();
 
     return useQuery({
-        queryKey: dashboardKeys.leadsTrend(period, pipelineId),
+        queryKey: dashboardKeys.leadsTrend(period, pipelineId, employeeId),
         queryFn: async () => {
             if (!pipelineId) return [];
 
@@ -596,12 +676,16 @@ export function useLeadsTrend(period: DashboardTrendPeriod, pipelineId?: string)
             const endDate = new Date(now);
             endDate.setHours(23, 59, 59, 999);
 
-            const { data, error } = await supabase
+            let leadsQuery = supabase
                 .from("leads")
                 .select("created_at")
                 .eq("pipeline_id", pipelineId)
                 .gte("created_at", startDate.toISOString())
                 .lte("created_at", endDate.toISOString());
+
+            leadsQuery = applyEmployeeScope(leadsQuery, employeeId);
+
+            const { data, error } = await leadsQuery;
 
             if (error) throw error;
 

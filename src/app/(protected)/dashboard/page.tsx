@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { useBranch } from "@/components/app-sidebar";
 import { usePipelines } from "@/hooks/use-pipeline";
+import { useEmployee } from "@/hooks/use-employee";
 import {
   useDashboardStats,
   useLeadsByStage,
@@ -122,6 +123,22 @@ export default function DashboardPage() {
   const { selectedBranch } = useBranch();
   const branchId = selectedBranch?.id;
   const { theme } = useTheme();
+  const { data: currentEmployee, isLoading: employeeLoading } = useEmployee();
+  const isAdmin = currentEmployee?.role === "super-admin";
+  const scopedEmployeeId = !employeeLoading && currentEmployee && !isAdmin ? currentEmployee.id : undefined;
+  const dashboardReady = !employeeLoading && (isAdmin || Boolean(scopedEmployeeId));
+  const dashboardScope = useMemo(() => {
+    if (!scopedEmployeeId || !currentEmployee) return undefined;
+
+    return {
+      employeeId: scopedEmployeeId,
+      participantIds: getEmployeeParticipantIds({
+        id: currentEmployee.id,
+        user_id: currentEmployee.user_id,
+        employee_id: currentEmployee.employee_id,
+      }),
+    };
+  }, [currentEmployee, scopedEmployeeId]);
 
   // Theme-aware colors
   const axisTickColor = theme === "dark" ? "#a1a1a1" : "#6b7280";
@@ -203,29 +220,49 @@ export default function DashboardPage() {
 
     return pipelines[0]?.id ?? "";
   }, [pipelines, selectedPipelineId]);
+  const scopedActivePipelineId = dashboardReady ? activePipelineId : "";
 
   const hasPipelines = pipelines.length > 0;
-  const hasActivePipeline = activePipelineId.length > 0;
+  const hasActivePipeline = scopedActivePipelineId.length > 0;
   const showPipelineEmptyState = !!branchId && !pipelinesLoading && !hasPipelines;
   const pipelinePending = !branchId || pipelinesLoading;
   const { data: callsEmployees = [], isLoading: callsEmployeesLoading } = useCallsEmployees(branchId ?? null);
+  const currentCallsEmployee = useMemo(() => {
+    if (!currentEmployee) return null;
+
+    return {
+      id: currentEmployee.id,
+      name: currentEmployee.name,
+      role: currentEmployee.role,
+      user_id: currentEmployee.user_id,
+      employee_id: currentEmployee.employee_id,
+      branch_id: currentEmployee.branch_id ?? undefined,
+    };
+  }, [currentEmployee]);
   const selectedCallsEmployee = useMemo(
-    () => callsEmployees.find((employee) => employee.id === selectedCallsEmployeeId) ?? null,
-    [callsEmployees, selectedCallsEmployeeId]
+    () =>
+      dashboardScope
+        ? currentCallsEmployee
+        : callsEmployees.find((employee) => employee.id === selectedCallsEmployeeId) ?? null,
+    [callsEmployees, currentCallsEmployee, dashboardScope, selectedCallsEmployeeId]
   );
   const activeCallsEmployeeId = useMemo(
     () =>
-      selectedCallsEmployeeId === "all" || selectedCallsEmployee
-        ? selectedCallsEmployeeId
-        : "all",
-    [selectedCallsEmployee, selectedCallsEmployeeId]
+      dashboardScope
+        ? scopedEmployeeId ?? "all"
+        : selectedCallsEmployeeId === "all" || selectedCallsEmployee
+          ? selectedCallsEmployeeId
+          : "all",
+    [dashboardScope, scopedEmployeeId, selectedCallsEmployee, selectedCallsEmployeeId]
   );
   const selectedCallsParticipantIds = useMemo(
     () =>
-      selectedCallsEmployee
-        ? getEmployeeParticipantIds(selectedCallsEmployee)
-        : [],
-    [selectedCallsEmployee]
+      dashboardScope
+        ? dashboardScope.participantIds ?? []
+        : selectedCallsEmployee
+          ? getEmployeeParticipantIds(selectedCallsEmployee)
+          : [],
+    [dashboardScope, selectedCallsEmployee]
   );
 
   // Fetch dashboard data
@@ -233,12 +270,12 @@ export default function DashboardPage() {
     data: stats,
     isLoading: statsLoading,
     isFetching: statsFetching,
-  } = useDashboardStats(activePipelineId, dateRange, branchId ?? null);
+  } = useDashboardStats(scopedActivePipelineId, dateRange, branchId ?? null, dashboardScope);
   const {
     data: leadsByStage,
     isLoading: stagesLoading,
     isFetching: stagesFetching,
-  } = useLeadsByStage(activePipelineId);
+  } = useLeadsByStage(scopedActivePipelineId, dashboardScope?.employeeId);
   const activeConversionStageId = useMemo(() => {
     if (!conversionStageId) return "";
     if (!leadsByStage?.length) return conversionStageId;
@@ -252,14 +289,15 @@ export default function DashboardPage() {
     isLoading: employeesLoading,
     isFetching: employeesFetching,
   } =
-    useEmployeeConversion(activeConversionStageId);
+    useEmployeeConversion(activeConversionStageId, dashboardScope?.employeeId);
   const {
     data: leadsTrend,
     isLoading: trendLoading,
     isFetching: trendFetching,
   } = useLeadsTrend(
     trendPeriod,
-    activePipelineId,
+    scopedActivePipelineId,
+    dashboardScope?.employeeId,
   );
   const {
     data: callsTrend,
@@ -292,7 +330,8 @@ export default function DashboardPage() {
   const showTrendLoader =
     !showPipelineEmptyState &&
     (!hasActivePipeline || (trendLoading && !leadsTrend));
-  const showCallsTrendLoader = (!branchId || callsTrendLoading || callsEmployeesLoading) && !callsTrend;
+  const callsEmployeeSelectorLoading = isAdmin && callsEmployeesLoading;
+  const showCallsTrendLoader = (!branchId || callsTrendLoading || callsEmployeeSelectorLoading) && !callsTrend;
   const showStagesLoader =
     !showPipelineEmptyState &&
     (!hasActivePipeline || (stagesLoading && !leadsByStage));
@@ -498,6 +537,7 @@ export default function DashboardPage() {
                   )}
                 </CardContent>
               </Card>
+
 
               {/* Tasks */}
               <Card className="hover:shadow-lg transition-all duration-200 border-border/60">
@@ -798,32 +838,34 @@ export default function DashboardPage() {
                 Calls Dinamikasi
               </CardTitle>
               <p className="text-xs text-muted-foreground">
-                {selectedCallsEmployee ? `${selectedCallsEmployee.name} bo&apos;yicha` : "Filial bo&apos;yicha"} kiruvchi va chiquvchi qo&apos;ng&apos;iroqlar
+                {selectedCallsEmployee ? `${selectedCallsEmployee.name} bo'yicha` : "Filial bo'yicha"} kiruvchi va chiquvchi qo&apos;ng&apos;iroqlar
               </p>
             </div>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
-              <div className="w-full sm:w-52">
-                <Label className="text-xs text-muted-foreground mb-1.5 block">
-                  Xodim
-                </Label>
-                <Select
-                  value={activeCallsEmployeeId}
-                  onValueChange={setSelectedCallsEmployeeId}
-                  disabled={!branchId || callsEmployeesLoading}
-                >
-                  <SelectTrigger className="h-8 text-sm">
-                    <SelectValue placeholder="Xodim tanlang" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Barcha xodimlar</SelectItem>
-                    {callsEmployees.map((employee) => (
-                      <SelectItem key={employee.id} value={employee.id}>
-                        {employee.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {isAdmin && (
+                <div className="w-full sm:w-52">
+                  <Label className="text-xs text-muted-foreground mb-1.5 block">
+                    Xodim
+                  </Label>
+                  <Select
+                    value={activeCallsEmployeeId}
+                    onValueChange={setSelectedCallsEmployeeId}
+                    disabled={!branchId || callsEmployeesLoading}
+                  >
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="Xodim tanlang" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Barcha xodimlar</SelectItem>
+                      {callsEmployees.map((employee) => (
+                        <SelectItem key={employee.id} value={employee.id}>
+                          {employee.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <Tabs
                 value={callsTrendPeriod}
                 onValueChange={(v) => setCallsTrendPeriod(v as typeof callsTrendPeriod)}

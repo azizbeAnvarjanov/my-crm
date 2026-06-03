@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { use } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -13,6 +13,7 @@ import {
     useSensors,
     useDroppable,
     DragStartEvent,
+    DragOverEvent,
     DragEndEvent,
 } from "@dnd-kit/core";
 import {
@@ -36,6 +37,7 @@ import {
     X,
     Check,
     Users,
+    CalendarDays,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,6 +93,7 @@ const MINI_SCROLLBAR_TRACK_WIDTH = 208;
 const MINI_SCROLLBAR_MIN_THUMB_WIDTH = 44;
 const MINI_SCROLLBAR_EDGE_OFFSET = 6;
 const MINI_SCROLLBAR_USABLE_WIDTH = MINI_SCROLLBAR_TRACK_WIDTH - MINI_SCROLLBAR_EDGE_OFFSET * 2;
+type DropPlacement = "before" | "after";
 
 function clamp(value: number, min: number, max: number) {
     return Math.min(Math.max(value, min), max);
@@ -148,7 +151,17 @@ function getTimeAgo(dateString: string): string {
 }
 
 // Draggable Lead Card Component
-function LeadCard({ lead, isMoving, onClick }: { lead: Lead; isMoving?: boolean; onClick?: (lead: Lead) => void }) {
+function LeadCard({
+    lead,
+    isMoving,
+    isDragOverlay,
+    onClick,
+}: {
+    lead: Lead;
+    isMoving?: boolean;
+    isDragOverlay?: boolean;
+    onClick?: (lead: Lead) => void;
+}) {
     const {
         attributes,
         listeners,
@@ -162,15 +175,17 @@ function LeadCard({ lead, isMoving, onClick }: { lead: Lead; isMoving?: boolean;
 
     const style = {
         transform: CSS.Transform.toString(transform),
-        opacity: isDragging || isMoving ? 0.5 : 1,
-        zIndex: isDragging ? 1000 : 1,
+        opacity: !isDragOverlay && (isDragging || isMoving) ? 0.45 : 1,
+        zIndex: isDragging || isDragOverlay ? 1000 : 1,
     };
 
     return (
         <div
             ref={setNodeRef}
             style={style}
-            className={`bg-card border border-border rounded-lg p-3 transition-colors relative ${isDragging ? "shadow-lg ring-2 ring-primary cursor-grabbing" : "hover:border-primary/30 cursor-pointer"
+            className={`group bg-card border border-border rounded-lg p-3 transition-[border-color,box-shadow,opacity,transform] relative ${isDragging || isDragOverlay
+                ? "shadow-xl ring-2 ring-primary/70 cursor-grabbing"
+                : "hover:border-primary/40 hover:shadow-sm cursor-pointer"
                 }`}
         >
             {isMoving && (
@@ -194,13 +209,19 @@ function LeadCard({ lead, isMoving, onClick }: { lead: Lead; isMoving?: boolean;
                         <p className="text-xs text-muted-foreground">{lead.phone}</p>
                     </div>
                 </div>
-                <div
+                <button
+                    type="button"
                     {...attributes}
                     {...listeners}
-                    className="cursor-grab active:cursor-grabbing p-1 hover:bg-accent rounded"
+                    aria-label={`${lead.name} lidini ko'chirish`}
+                    onClick={(event) => event.stopPropagation()}
+                    className={`absolute h-[80%] right-1.5 top-1/2 z-20 flex h-8 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-all duration-200 touch-none cursor-grab active:cursor-grabbing hover:border-primary/60 hover:bg-primary/10 hover:text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${isDragging || isDragOverlay
+                        ? "opacity-100 translate-x-0"
+                        : "opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0"
+                        }`}
                 >
-                    <GripVertical className="h-4 w-4 text-muted-foreground" />
-                </div>
+                    <GripVertical className="h-4 w-4" />
+                </button>
             </div>
 
             <div className="space-y-1.5" onClick={() => onClick?.(lead)}>
@@ -210,43 +231,43 @@ function LeadCard({ lead, isMoving, onClick }: { lead: Lead; isMoving?: boolean;
                         <span>{lead.phone_2}</span>
                     </div>
                 )}
-                {lead.location && (
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <MapPin className="h-3 w-3" />
-                        <span className="line-clamp-1">{lead.location}</span>
-                    </div>
-                )}
+               
+               <div className="w-full flex items-center justify-between">
                 {lead.employee && (
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Users className="h-3 w-3" />
                         <span>{lead.employee.name}</span>
                     </div>
                 )}
-            </div>
-
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-border" onClick={() => onClick?.(lead)}>
-                {lead.status && (
-                    <Badge
-                        variant="outline"
-                        className={`text-xs ${lead.status === "new"
-                            ? "border-blue-500/50 text-blue-500"
-                            : lead.status === "contacted"
-                                ? "border-yellow-500/50 text-yellow-500"
-                                : lead.status === "qualified"
-                                    ? "border-green-500/50 text-green-500"
-                                    : lead.status === "lost"
-                                        ? "border-red-500/50 text-red-500"
-                                        : "border-muted-foreground/50 text-muted-foreground"
-                            }`}
-                    >
-                        {lead.status}
-                    </Badge>
-                )}
                 {lead.updated_at && (
-                    <span className="text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <CalendarDays className="h-3 w-3" />
+                        <span className="text-xs text-muted-foreground">
                         {getTimeAgo(lead.updated_at)}
                     </span>
+                    </div>
                 )}
+               </div>
+            </div>
+        </div>
+    );
+}
+
+function LeadDropPreview({
+    stageColor,
+    leadName,
+}: {
+    stageColor?: string | null;
+    leadName?: string;
+}) {
+    return (
+        <div
+            className="h-[78px] rounded-lg border-2 border-dashed bg-primary/5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)] transition-all duration-200 flex items-center justify-center"
+            style={{ borderColor: stageColor || DEFAULT_STAGE_COLOR }}
+        >
+            <div className="flex items-center gap-2 text-xs font-medium text-primary">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: stageColor || DEFAULT_STAGE_COLOR }} />
+                <span>{leadName ? `${leadName} ko'chirish` : "Lid ko'chirish"}</span>
             </div>
         </div>
     );
@@ -264,6 +285,10 @@ function StageColumn({
     onDeleteStage,
     onLeadClick,
     movingLeadId,
+    activeLead,
+    dragOverStageId,
+    dragOverLeadId,
+    dragOverPlacement,
     onTotalCountChange,
 }: {
     stage: Stage;
@@ -276,6 +301,10 @@ function StageColumn({
     onDeleteStage: (stage: Stage) => void;
     onLeadClick: (lead: Lead) => void;
     movingLeadId: string | null;
+    activeLead: Lead | null;
+    dragOverStageId: string | null;
+    dragOverLeadId: string | null;
+    dragOverPlacement: DropPlacement | null;
     onTotalCountChange?: (stageId: string, totalCount: number) => void;
 }) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -342,11 +371,25 @@ function StageColumn({
         id: stage.id,
         data: { type: "stage", stage },
     });
+    const shouldShowDropPreview = Boolean(
+        activeLead
+        && activeLead.stage_id !== stage.id
+        && dragOverStageId === stage.id
+    );
+    const isDropPreviewBeforeLead = (leadId: string) => shouldShowDropPreview && dragOverLeadId === leadId;
+    const isDropPreviewAfterLead = (leadId: string) => (
+        shouldShowDropPreview
+        && dragOverLeadId === leadId
+        && dragOverPlacement === "after"
+    );
+    const shouldAppendDropPreview = shouldShowDropPreview && (
+        !dragOverLeadId || !leads.some((lead) => lead.id === dragOverLeadId)
+    );
 
     return (
         <div
             ref={setNodeRef}
-            className={`flex-shrink-0 w-80 bg-accent/30 rounded-xl flex flex-col transition-all ${isOver ? "ring-2 ring-primary bg-primary/5" : ""
+            className={`flex-shrink-0 w-80 bg-accent/30 rounded-xl flex flex-col transition-all ${isOver || shouldShowDropPreview ? "ring-2 ring-primary bg-primary/5" : ""
                 }`}
         >
             {/* Stage Header */}
@@ -421,16 +464,36 @@ function StageColumn({
                     <>
                         <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
                             {leads.map((lead) => (
-                                <LeadCard
-                                    key={lead.id}
-                                    lead={lead}
-                                    isMoving={movingLeadId === lead.id}
-                                    onClick={onLeadClick}
-                                />
+                                <Fragment key={lead.id}>
+                                    {isDropPreviewBeforeLead(lead.id) && dragOverPlacement !== "after" && (
+                                        <LeadDropPreview
+                                            stageColor={stage.color}
+                                            leadName={activeLead?.name}
+                                        />
+                                    )}
+                                    <LeadCard
+                                        lead={lead}
+                                        isMoving={movingLeadId === lead.id}
+                                        onClick={onLeadClick}
+                                    />
+                                    {isDropPreviewAfterLead(lead.id) && (
+                                        <LeadDropPreview
+                                            stageColor={stage.color}
+                                            leadName={activeLead?.name}
+                                        />
+                                    )}
+                                </Fragment>
                             ))}
                         </SortableContext>
 
-                        {leads.length === 0 && (
+                        {shouldAppendDropPreview && (
+                            <LeadDropPreview
+                                stageColor={stage.color}
+                                leadName={activeLead?.name}
+                            />
+                        )}
+
+                        {leads.length === 0 && !shouldShowDropPreview && (
                             <div className={`py-8 text-center border-2 border-dashed rounded-lg transition-colors ${isOver ? "border-primary bg-primary/5" : "border-transparent"
                                 }`}>
                                 <p className="text-sm text-muted-foreground">
@@ -512,6 +575,9 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         maxScroll: 0,
     });
     const [isMiniScrollbarDragging, setIsMiniScrollbarDragging] = useState(false);
+    const [dragOverStageId, setDragOverStageId] = useState<string | null>(null);
+    const [dragOverLeadId, setDragOverLeadId] = useState<string | null>(null);
+    const [dragOverPlacement, setDragOverPlacement] = useState<DropPlacement | null>(null);
 
     // Scroll container ref for horizontal scrolling
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -730,48 +796,107 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         setIsMiniScrollbarDragging(true);
     }, [canUseMiniScrollbar, horizontalScrollState.scrollLeft]);
 
+    const getDragTarget = useCallback((over: DragOverEvent["over"]) => {
+        if (!over) return null;
+
+        const overData = over.data.current;
+
+        if (overData?.type === "stage") {
+            return {
+                stageId: (overData.stage as Stage).id,
+                leadId: null,
+            };
+        }
+
+        if (overData?.type === "lead") {
+            const overLead = overData.lead as Lead;
+
+            return {
+                stageId: overLead.stage_id,
+                leadId: overLead.id,
+            };
+        }
+
+        const overId = over.id as string;
+        return stages.some((stage) => stage.id === overId)
+            ? { stageId: overId, leadId: null }
+            : null;
+    }, [stages]);
+
+    const resetDragPreview = useCallback(() => {
+        setDragOverStageId(null);
+        setDragOverLeadId(null);
+        setDragOverPlacement(null);
+    }, []);
+
     // Drag handlers
     const handleDragStart = (event: DragStartEvent) => {
         const lead = event.active.data.current?.lead;
         setActiveLead(lead || null);
+        resetDragPreview();
+    };
+
+    const handleDragOver = (event: DragOverEvent) => {
+        const activeData = event.active.data.current;
+
+        if (!activeData || activeData.type !== "lead") {
+            resetDragPreview();
+            return;
+        }
+
+        const lead = activeData.lead as Lead;
+        const target = getDragTarget(event.over);
+
+        if (!target || target.stageId === lead.stage_id) {
+            resetDragPreview();
+            return;
+        }
+
+        setDragOverStageId(target.stageId);
+        setDragOverLeadId(target.leadId);
+        setDragOverPlacement(() => {
+            if (!target.leadId || !event.over) return null;
+
+            const activeRect = event.active.rect.current.translated;
+            const overRect = event.over.rect;
+
+            if (!activeRect || !overRect) return "before";
+
+            const activeMiddleY = activeRect.top + activeRect.height / 2;
+            const overMiddleY = overRect.top + overRect.height / 2;
+
+            return activeMiddleY > overMiddleY ? "after" : "before";
+        });
+    };
+
+    const handleDragCancel = () => {
+        setActiveLead(null);
+        resetDragPreview();
     };
 
     const handleDragEnd = (event: DragEndEvent) => {
         const { active, over } = event;
-        setActiveLead(null);
+        const target = getDragTarget(over);
 
-        if (!over) return;
+        setActiveLead(null);
+        resetDragPreview();
+
+        if (!target) return;
 
         const activeData = active.data.current;
-        const overData = over.data.current;
 
         // Check if we're dragging a lead
         if (!activeData || activeData.type !== "lead") return;
         const lead = activeData.lead as Lead;
         const activeId = active.id as string;
 
-        // Determine target stage ID
-        let targetStageId: string | null = null;
-
-        if (overData?.type === "stage") {
-            targetStageId = overData.stage.id;
-        } else if (overData?.type === "lead") {
-            targetStageId = (overData.lead as Lead).stage_id;
-        } else {
-            // Fallback: if overId is one of the stage IDs
-            const overId = over.id as string;
-            if (stages.some(s => s.id === overId)) {
-                targetStageId = overId;
-            }
-        }
-
         // If no target stage or same stage, cancel
-        if (!targetStageId || lead.stage_id === targetStageId) return;
+        if (lead.stage_id === target.stageId) return;
 
         // Execute move mutation
         moveLeadMutation.mutate({
             leadId: activeId,
-            newStageId: targetStageId,
+            newStageId: target.stageId,
             oldStageId: lead.stage_id,
             pipelineId,
             employeeId,
@@ -1008,6 +1133,8 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         sensors={sensors}
                         collisionDetection={closestCorners}
                         onDragStart={handleDragStart}
+                        onDragOver={handleDragOver}
+                        onDragCancel={handleDragCancel}
                         onDragEnd={handleDragEnd}
                     >
                         <div className="flex gap-3 h-full pb-4">
@@ -1024,6 +1151,10 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                                     onDeleteStage={handleDeleteStage}
                                     onLeadClick={handleLeadClick}
                                     movingLeadId={movingLeadId}
+                                    activeLead={activeLead}
+                                    dragOverStageId={dragOverStageId}
+                                    dragOverLeadId={dragOverLeadId}
+                                    dragOverPlacement={dragOverPlacement}
                                     onTotalCountChange={handleStageTotalCountChange}
                                 />
                             ))}
@@ -1031,7 +1162,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
                         {/* Drag Overlay */}
                         <DragOverlay>
-                            {activeLead && <LeadCard lead={activeLead} />}
+                            {activeLead && <LeadCard lead={activeLead} isDragOverlay />}
                         </DragOverlay>
                     </DndContext>
                 )}

@@ -88,6 +88,10 @@ type EmployeeScopeQuery<T> = {
     eq: (column: string, value: string) => T;
 };
 
+type OperatorFilterQuery<T> = {
+    in: (column: string, values: string[]) => T;
+};
+
 const dashboardKeys = {
     all: ["dashboard-stats"] as const,
     stats: (
@@ -116,6 +120,16 @@ const dashboardKeys = {
         [...dashboardKeys.all, "calls-trend", period, branchId, participantKey] as const,
 };
 
+function normalizeTextValues(values: Array<string | null | undefined>) {
+    return Array.from(
+        new Set(
+            values
+                .map((value) => (value == null ? "" : String(value).trim()))
+                .filter(Boolean)
+        )
+    );
+}
+
 // Sana filtri qo'llash helper
 function applyDateRange<T extends DateRangeQuery<T>>(query: T, dateRange?: DashboardDateRange, dateField = "created_at") {
     if (!dateRange) return query;
@@ -128,14 +142,13 @@ function applyEmployeeScope<T extends EmployeeScopeQuery<T>>(query: T, employeeI
     return employeeId ? query.eq("employee_id", employeeId) : query;
 }
 
+function applyCallOperatorFilter<T extends OperatorFilterQuery<T>>(query: T, operatorIds: string[]) {
+    const normalizedOperatorIds = normalizeTextValues(operatorIds);
+    return normalizedOperatorIds.length > 0 ? query.in("operator_id", normalizedOperatorIds) : query;
+}
+
 function getScopedParticipantIds(scope?: DashboardEmployeeScope) {
-    return Array.from(
-        new Set(
-            (scope?.participantIds ?? [])
-                .map((participantId) => participantId.trim())
-                .filter(Boolean)
-        )
-    );
+    return normalizeTextValues(scope?.participantIds ?? []);
 }
 
 function getTrendConfig(period: DashboardTrendPeriod) {
@@ -235,6 +248,21 @@ async function getBranchEmployeesWithParticipants(
             }),
         }))
         .filter((employee) => employee.participantIds.length > 0);
+}
+
+async function getBranchEmployeeOperatorIds(
+    supabase: ReturnType<typeof createClient>,
+    branchId: string,
+) {
+    const { data: employees, error: empError } = await supabase
+        .from("xodimlar")
+        .select("user_id")
+        .eq("branch_id", branchId);
+
+    if (empError) throw empError;
+
+    const rows = (employees ?? []) as Array<{ user_id: string | null }>;
+    return normalizeTextValues(rows.map((employee) => employee.user_id));
 }
 
 // Asosiy dashboard statistikasi (pipeline + sana filtri bo'yicha)
@@ -458,16 +486,17 @@ export function useLeadsByStage(pipelineId?: string, employeeId?: string) {
             let leadsQuery = supabase
                 .from("leads")
                 .select("stage_id")
-                .eq("pipeline_id", pipelineId);
-
+                .eq("pipeline_id", pipelineId)
+                .order('created_at', { ascending: false })
             leadsQuery = applyEmployeeScope(leadsQuery, employeeId);
 
             const [{ data: stages, error: stagesError }, { data: leads, error: leadsError }] =
                 await Promise.all([
                     supabase
                         .from("stages")
-                        .select("id, name")
-                        .eq("pipeline_id", pipelineId),
+                        .select("id, name, created_at")
+                        .eq("pipeline_id", pipelineId)
+                        .order("created_at", { ascending: true }),
                     leadsQuery,
                 ]);
 
@@ -721,13 +750,13 @@ export function useLeadsTrend(period: DashboardTrendPeriod, pipelineId?: string,
 export function useCallsTrend(
     period: DashboardTrendPeriod,
     branchId: string | null,
-    participantIds: string[] = [],
+    operatorIds?: string[] | null,
 ) {
     const supabase = createClient();
-    const participantKey = participantIds.join(",");
+    const operatorKey = operatorIds == null ? "branch" : normalizeTextValues(operatorIds).join(",");
 
     return useQuery({
-        queryKey: dashboardKeys.callsTrend(period, branchId, participantKey),
+        queryKey: dashboardKeys.callsTrend(period, branchId, operatorKey),
         queryFn: async () => {
             if (!branchId) return [];
 
@@ -741,13 +770,20 @@ export function useCallsTrend(
             const endDate = new Date(now);
             endDate.setHours(23, 59, 59, 999);
 
+            const activeOperatorIds =
+                operatorIds == null
+                    ? await getBranchEmployeeOperatorIds(supabase, branchId)
+                    : normalizeTextValues(operatorIds);
+
+            if (activeOperatorIds.length === 0) {
+                return buildCallsTrendPoints(period, new Map());
+            }
+
             let callsQuery = supabase
                 .from("calls")
                 .select("called_at, created_at, direction");
 
-            if (participantIds.length > 0) {
-                callsQuery = applyCallParticipantFilter(callsQuery, participantIds);
-            }
+            callsQuery = applyCallOperatorFilter(callsQuery, activeOperatorIds);
 
             callsQuery = callsQuery
                 .gte("called_at", startDate.toISOString())

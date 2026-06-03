@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react"
-import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Volume2, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle } from "lucide-react";
+import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle } from "lucide-react";
 import {
     Sheet,
     SheetContent,
@@ -23,10 +23,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Lead, Stage } from "@/hooks/use-pipeline";
-import { useTasksByLead, useCreateTask, useUpdateTask, useDeleteTask, useToggleTaskStatus, TASK_TYPES, TaskType } from "@/hooks/use-tasks";
+import { useTasksByLead, useCreateTask, useUpdateTask, useDeleteTask, useToggleTaskStatus, TASK_TYPES, type Task, type TaskType } from "@/hooks/use-tasks";
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
 import { Call, getCallStatusLabel, normalizeCallRow } from "@/hooks/use-calls";
@@ -54,6 +54,10 @@ interface LeadSheetProps {
     isUpdating?: boolean;
 }
 
+type LeadUpdate = Partial<Omit<Lead, "date_of_year">> & {
+    date_of_year?: string | null;
+};
+
 function getCallPhoneVariants(phone: string): string[] {
     const digits = phone.replace(/\D/g, "");
     if (!digits) return [];
@@ -70,6 +74,50 @@ function getCallPhoneVariants(phone: string): string[] {
     }
 
     return Array.from(variants).filter(Boolean);
+}
+
+const UZ_PHONE_LOCAL_LENGTH = 9;
+
+function getUzPhoneLocalDigits(value?: string | null): string {
+    const digits = String(value ?? "").replace(/\D/g, "");
+    const withoutCountryCode = digits.startsWith("998") ? digits.slice(3) : digits;
+
+    return withoutCountryCode.slice(0, UZ_PHONE_LOCAL_LENGTH);
+}
+
+function formatUzPhone(value?: string | null): string {
+    const localDigits = getUzPhoneLocalDigits(value);
+
+    if (!localDigits) {
+        return "+998 ";
+    }
+
+    const parts = [
+        localDigits.slice(0, 2),
+        localDigits.slice(2, 5),
+        localDigits.slice(5, 7),
+        localDigits.slice(7, 9),
+    ].filter(Boolean);
+
+    return `+998 ${parts.join(" ")}`;
+}
+
+function formatOptionalUzPhone(value?: string | null): string {
+    const localDigits = getUzPhoneLocalDigits(value);
+    if (localDigits) return formatUzPhone(value);
+
+    const textValue = String(value ?? "");
+    const digits = textValue.replace(/\D/g, "");
+
+    return textValue.startsWith("+998") || digits === "998" ? "+998 " : "";
+}
+
+function getSavableUzPhone(value?: string | null): string {
+    return getUzPhoneLocalDigits(value) ? formatUzPhone(value) : "";
+}
+
+function hasCompleteUzPhone(value?: string | null): boolean {
+    return getUzPhoneLocalDigits(value).length === UZ_PHONE_LOCAL_LENGTH;
 }
 
 export function LeadSheet({
@@ -92,7 +140,7 @@ export function LeadSheet({
     const [newTaskDate, setNewTaskDate] = useState("");
     const [newTaskTime, setNewTaskTime] = useState("");
     const [newTaskType, setNewTaskType] = useState<TaskType>("qayta_aloqa");
-    const [editingTask, setEditingTask] = useState<any | null>(null);
+    const [editingTask, setEditingTask] = useState<Task | null>(null);
     const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
     const [taskResult, setTaskResult] = useState("");
 
@@ -112,8 +160,8 @@ export function LeadSheet({
         if (lead) {
             setEditedLead({
                 name: lead.name,
-                phone: lead.phone,
-                phone_2: lead.phone_2 || "",
+                phone: formatUzPhone(lead.phone),
+                phone_2: formatOptionalUzPhone(lead.phone_2),
                 location: lead.location || "",
                 age: lead.age,
                 gender: lead.gender || "",
@@ -185,21 +233,35 @@ export function LeadSheet({
         window.location.href = `sip:${clean}`;
     };
 
-    const handleFieldChange = (field: keyof Lead, value: any) => {
+    const handleFieldChange = <K extends keyof Lead>(field: K, value: Lead[K]) => {
         setEditedLead(prev => ({ ...prev, [field]: value }));
         setHasChanges(true);
+    };
+
+    const handlePhoneFieldChange = (field: "phone" | "phone_2", value: string) => {
+        handleFieldChange(field, formatUzPhone(value));
+    };
+
+    const handlePhoneFocus = (field: "phone" | "phone_2") => {
+        const currentValue = editedLead[field];
+        if (getUzPhoneLocalDigits(currentValue).length > 0) return;
+
+        setEditedLead(prev => ({ ...prev, [field]: "+998 " }));
     };
 
     const handleSave = async () => {
         if (!lead || !hasChanges) return;
 
-        const cleanedData = { ...editedLead };
+        const cleanedData: LeadUpdate = { ...editedLead };
+        cleanedData.phone = getSavableUzPhone(cleanedData.phone);
+        cleanedData.phone_2 = getSavableUzPhone(cleanedData.phone_2);
+
         if (cleanedData.date_of_year === "") {
-            cleanedData.date_of_year = null as any;
+            cleanedData.date_of_year = null;
         }
 
         try {
-            await onUpdateLead(lead.id, cleanedData);
+            await onUpdateLead(lead.id, cleanedData as Partial<Lead>);
             setHasChanges(false);
             onClose();
         } catch (error) {
@@ -328,17 +390,19 @@ export function LeadSheet({
 
     if (!lead) return null;
 
-    const currentStage = stages.find(s => s.id === (editedLead.stage_id || lead.stage_id));
-
     return (
         <Sheet open={isOpen} onOpenChange={onClose}>
-            <SheetContent className="w-full sm:max-w-[80vw] overflow-y-auto p-0">
+            <SheetContent className="w-full sm:max-w-[97vw] overflow-y-auto p-0">
+                <SheetHeader className="sr-only">
+                    <SheetTitle>{lead.name ? `${lead.name} tafsilotlari` : "Lead tafsilotlari"}</SheetTitle>
+                    <SheetDescription>Lead tafsilotlarini korish va tahrirlash</SheetDescription>
+                </SheetHeader>
                 <div className="flex h-full">
-                    {/* Right Side - Lead Details */}
-                    <div className="flex-1 p-6 overflow-y-auto">
-                        <SheetHeader className="mb-6">
-                            <div className="flex items-start justify-between">
-                                <div className="flex-1">
+                    {/* left Side - Lead Details */}
+                    <div className="w-[30%] p-4 overflow-y-auto border-r">
+                        <SheetHeader className="">
+                            <div className="space-y-4">
+                                {/* <div className="flex-1">
                                     <SheetTitle className="text-2xl font-bold">
                                         {lead.name}
                                     </SheetTitle>
@@ -346,8 +410,8 @@ export function LeadSheet({
                                         <Phone className="h-4 w-4" />
                                         {lead.phone}
                                     </SheetDescription>
-                                </div>
-                                <Badge
+                                </div> */}
+                                {/* <Badge
                                     style={{
                                         backgroundColor: currentStage?.color ? `${currentStage.color}20` : undefined,
                                         color: currentStage?.color,
@@ -356,17 +420,56 @@ export function LeadSheet({
                                     className="ml-2"
                                 >
                                     {currentStage?.name || "No Stage"}
-                                </Badge>
+                                </Badge> */}
+                                    {/* Stage Selection */}
+                                    <Select
+                                        value={editedLead.stage_id || lead.stage_id}
+                                        onValueChange={(value) => handleFieldChange("stage_id", value)}
+                                    >
+                                        <SelectTrigger id="stage" className="w-full">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {stages.map((stage) => (
+                                                <SelectItem key={stage.id} value={stage.id}>
+                                                    <div className="flex items-center gap-2">
+                                                        <div
+                                                            className="w-3 h-3 rounded-full"
+                                                            style={{ backgroundColor: stage.color || "#888" }}
+                                                        />
+                                                        {stage.name}
+                                                    </div>
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                <div className="space-y-2 text-xs text-muted-foreground min-w-[150px]">
+                                <div className="flex justify-between">
+                                    <span>Yaratilgan:</span>
+                                    <span>{lead.created_at ? new Date(lead.created_at).toLocaleDateString("uz-UZ") : "-"}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Yangilangan:</span>
+                                    <span>{lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("uz-UZ") : "-"}</span>
+                                </div>
+
+                           {lead.employee && (
+                                    <div className="flex justify-between">
+                                        <span>Mas&apos;ul xodim:</span>
+                                        <span>{lead.employee.name}</span>
+                                    </div>
+                                )}
+                            </div>
                             </div>
                         </SheetHeader>
 
-                        <Separator className="my-6" />
+                        <Separator className="my-2" />
 
                         <div className="space-y-6">
                             {/* Asosiy ma'lumotlar */}
                             <div className="space-y-4">
                                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                                    Asosiy ma'lumotlar
+                                    Asosiy ma&apos;lumotlar
                                 </h3>
 
                                 <div className="space-y-3">
@@ -391,8 +494,12 @@ export function LeadSheet({
                                                 <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                                                 <Input
                                                     id="phone"
-                                                    value={editedLead.phone || ""}
-                                                    onChange={(e) => handleFieldChange("phone", e.target.value)}
+                                                    type="tel"
+                                                    inputMode="numeric"
+                                                    maxLength={17}
+                                                    value={formatUzPhone(editedLead.phone)}
+                                                    onFocus={() => handlePhoneFocus("phone")}
+                                                    onChange={(e) => handlePhoneFieldChange("phone", e.target.value)}
                                                     className="pl-9"
                                                     placeholder="+998 90 123 45 67"
                                                 />
@@ -401,7 +508,7 @@ export function LeadSheet({
                                                 type="button"
                                                 size="icon"
                                                 variant="outline"
-                                                disabled={!editedLead.phone && !lead?.phone}
+                                                disabled={!hasCompleteUzPhone(editedLead.phone || lead?.phone)}
                                                 className="flex-shrink-0"
                                                 onClick={() => handleCall(editedLead.phone || lead?.phone || "")}
                                             >
@@ -411,14 +518,18 @@ export function LeadSheet({
                                     </div>
 
                                     <div className="space-y-2">
-                                        <Label htmlFor="phone_2">Qo'shimcha telefon</Label>
+                                        <Label htmlFor="phone_2">Qo&apos;shimcha telefon</Label>
                                         <div className="flex gap-2">
                                             <div className="relative flex-1">
                                                 <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                                                 <Input
                                                     id="phone_2"
-                                                    value={editedLead.phone_2 || ""}
-                                                    onChange={(e) => handleFieldChange("phone_2", e.target.value)}
+                                                    type="tel"
+                                                    inputMode="numeric"
+                                                    maxLength={17}
+                                                    value={formatOptionalUzPhone(editedLead.phone_2)}
+                                                    onFocus={() => handlePhoneFocus("phone_2")}
+                                                    onChange={(e) => handlePhoneFieldChange("phone_2", e.target.value)}
                                                     className="pl-9"
                                                     placeholder="+998 90 123 45 67"
                                                 />
@@ -427,7 +538,7 @@ export function LeadSheet({
                                                 type="button"
                                                 size="icon"
                                                 variant="outline"
-                                                disabled={!editedLead.phone_2 && !lead?.phone_2}
+                                                disabled={!hasCompleteUzPhone(editedLead.phone_2 || lead?.phone_2)}
                                                 className="flex-shrink-0"
                                                 onClick={() => handleCall(editedLead.phone_2 || lead?.phone_2 || "")}
                                             >
@@ -457,7 +568,7 @@ export function LeadSheet({
                             {/* Qo'shimcha ma'lumotlar */}
                             <div className="space-y-4">
                                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                                    Qo'shimcha
+                                    Qo&apos;shimcha
                                 </h3>
 
                                 <div className="grid grid-cols-2 gap-4">
@@ -494,7 +605,7 @@ export function LeadSheet({
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label htmlFor="date_of_year">Tug'ilgan sana</Label>
+                                    <Label htmlFor="date_of_year">Tug&apos;ilgan sana</Label>
                                     <div className="relative">
                                         <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                                         <Input
@@ -518,62 +629,11 @@ export function LeadSheet({
                                 </div>
                             </div>
 
-                            <Separator />
 
-                            {/* Stage Selection */}
-                            <div className="space-y-4">
-                                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                                    Bosqich
-                                </h3>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="stage">Joriy bosqich</Label>
-                                    <Select
-                                        value={editedLead.stage_id || lead.stage_id}
-                                        onValueChange={(value) => handleFieldChange("stage_id", value)}
-                                    >
-                                        <SelectTrigger id="stage">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {stages.map((stage) => (
-                                                <SelectItem key={stage.id} value={stage.id}>
-                                                    <div className="flex items-center gap-2">
-                                                        <div
-                                                            className="w-3 h-3 rounded-full"
-                                                            style={{ backgroundColor: stage.color || "#888" }}
-                                                        />
-                                                        {stage.name}
-                                                    </div>
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            </div>
-
-                            {/* Metadata */}
-                            <Separator />
-                            <div className="space-y-2 text-xs text-muted-foreground">
-                                <div className="flex justify-between">
-                                    <span>Yaratilgan:</span>
-                                    <span>{lead.created_at ? new Date(lead.created_at).toLocaleDateString("uz-UZ") : "-"}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Yangilangan:</span>
-                                    <span>{lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("uz-UZ") : "-"}</span>
-                                </div>
-                                {lead.employee && (
-                                    <div className="flex justify-between">
-                                        <span>Mas'ul xodim:</span>
-                                        <span>{lead.employee.name}</span>
-                                    </div>
-                                )}
-                            </div>
                         </div>
 
                         {/* Footer Actions */}
-                        <div className="sticky bottom-0 bg-background pt-6 pb-2 border-t mt-8 flex items-center gap-3">
+                        <div className="sticky bottom-0 bg-background pt-3 pb-0 border-t mt-8 flex items-center gap-3">
                             <Button variant="outline" onClick={onClose} className="flex-1">
                                 <X className="h-4 w-4 mr-2" />
                                 Bekor qilish
@@ -593,8 +653,8 @@ export function LeadSheet({
                         </div>
                     </div>
 
-                    {/* Left Side - Calls & Notes */}
-                    <div className="w-2/5 border-r border-border p-6 overflow-y-auto">
+                    {/* right Side - Calls & Notes */}
+                    <div className="w-[70%] border-r border-border p-6 overflow-y-auto">
                         {todayPendingTasks.length > 0 && (
                             <div className="mb-4 p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
                                 <div className="flex items-center gap-2 mb-2">
@@ -638,7 +698,7 @@ export function LeadSheet({
 
                         <Tabs defaultValue="calls" className="h-full flex flex-col">
                             <TabsList className="grid w-full grid-cols-2 mb-4">
-                                <TabsTrigger value="calls">Qo'ng'iroqlar</TabsTrigger>
+                                <TabsTrigger value="calls">Qo&apos;ng&apos;iroqlar</TabsTrigger>
                                 <TabsTrigger value="notes" className="relative">
                                     Eslatmalar
                                     {pendingTasks.length > 0 && (
@@ -657,7 +717,7 @@ export function LeadSheet({
                                 ) : calls.length === 0 ? (
                                     <div className="text-center py-12 text-muted-foreground">
                                         <PhoneCall className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                                        <p>Qo'ng'iroqlar topilmadi</p>
+                                        <p>Qo&apos;ng&apos;iroqlar topilmadi</p>
                                     </div>
                                 ) : (
                                     calls.map((call) => {
@@ -791,7 +851,7 @@ export function LeadSheet({
                                             ) : (
                                                 <Plus className="h-4 w-4 mr-2" />
                                             )}
-                                            Qo'shish
+                                            Qo&apos;shish
                                         </Button>
                                     </CardContent>
                                 </Card>
@@ -803,7 +863,7 @@ export function LeadSheet({
                                 ) : tasks.length === 0 ? (
                                     <div className="text-center py-12 text-muted-foreground">
                                         <StickyNote className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                                        <p>Eslatmalar yo'q</p>
+                                        <p>Eslatmalar yo&apos;q</p>
                                     </div>
                                 ) : (
                                     <>
@@ -817,8 +877,8 @@ export function LeadSheet({
                                                             {editingTask?.id === task.id ? (
                                                                 <CardContent className="p-3 space-y-2">
                                                                     <Select
-                                                                        value={editingTask.task_type || 'qayta_aloqa'}
-                                                                        onValueChange={(v) => setEditingTask({ ...editingTask, task_type: v })}
+                                                                        value={editingTask.task_type || "qayta_aloqa"}
+                                                                        onValueChange={(v) => setEditingTask({ ...editingTask, task_type: v as TaskType })}
                                                                     >
                                                                         <SelectTrigger className="h-9">
                                                                             <SelectValue />

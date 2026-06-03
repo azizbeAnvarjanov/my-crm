@@ -255,15 +255,17 @@ export default function DashboardPage() {
           : "all",
     [dashboardScope, scopedEmployeeId, selectedCallsEmployee, selectedCallsEmployeeId]
   );
-  const selectedCallsParticipantIds = useMemo(
-    () =>
-      dashboardScope
-        ? dashboardScope.participantIds ?? []
-        : selectedCallsEmployee
-          ? getEmployeeParticipantIds(selectedCallsEmployee)
-          : [],
-    [dashboardScope, selectedCallsEmployee]
-  );
+  const selectedCallsOperatorIds = useMemo(() => {
+    if (dashboardScope) {
+      return currentEmployee?.user_id ? [String(currentEmployee.user_id)] : [];
+    }
+
+    if (!selectedCallsEmployee) {
+      return undefined;
+    }
+
+    return selectedCallsEmployee.user_id ? [selectedCallsEmployee.user_id] : [];
+  }, [currentEmployee, dashboardScope, selectedCallsEmployee]);
 
   // Fetch dashboard data
   const {
@@ -306,7 +308,7 @@ export default function DashboardPage() {
   } = useCallsTrend(
     callsTrendPeriod,
     branchId ?? null,
-    selectedCallsParticipantIds,
+    selectedCallsOperatorIds,
   );
   const {
     data: topCallers,

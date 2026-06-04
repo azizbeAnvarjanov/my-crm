@@ -59,6 +59,8 @@ type LeadUpdate = Partial<Omit<Lead, "date_of_year">> & {
     date_of_year?: string | null;
 };
 
+type TimelineComposerMode = "note" | "task";
+
 type TimelineItem = {
     id: string;
     eventType: string;
@@ -311,6 +313,10 @@ function hasCompleteUzPhone(value?: string | null): boolean {
     return getUzPhoneLocalDigits(value).length === UZ_PHONE_LOCAL_LENGTH;
 }
 
+function getTodayDateValue(): string {
+    return new Date().toISOString().split("T")[0];
+}
+
 export function LeadSheet({
     lead,
     isOpen,
@@ -334,7 +340,11 @@ export function LeadSheet({
     const [editingTask, setEditingTask] = useState<Task | null>(null);
     const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
     const [taskResult, setTaskResult] = useState("");
+    const [timelineComposerMode, setTimelineComposerMode] = useState<TimelineComposerMode>("note");
     const [timelineNote, setTimelineNote] = useState("");
+    const [timelineTaskType, setTimelineTaskType] = useState<TaskType>("qayta_aloqa");
+    const [timelineTaskDate, setTimelineTaskDate] = useState(getTodayDateValue());
+    const [timelineTaskTime, setTimelineTaskTime] = useState("");
 
     const { data: employee } = useEmployee();
     const { data: tasks = [], isLoading: tasksLoading } = useTasksByLead(lead?.id || "");
@@ -345,7 +355,7 @@ export function LeadSheet({
     const toggleTaskMutation = useToggleTaskStatus();
     const createTimelineNoteMutation = useCreateLeadTimelineNote();
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayDateValue();
     const todayPendingTasks = useMemo(() => tasks.filter(t => !t.status && t.date === today), [tasks, today]);
     const pendingTasks = useMemo(() => tasks.filter(t => !t.status), [tasks]);
     const completedTasks = useMemo(() => tasks.filter(t => t.status), [tasks]);
@@ -390,6 +400,10 @@ export function LeadSheet({
             });
             setHasChanges(false);
             setTimelineNote("");
+            setTimelineComposerMode("note");
+            setTimelineTaskType("qayta_aloqa");
+            setTimelineTaskDate(getTodayDateValue());
+            setTimelineTaskTime("");
         }
     }, [lead]);
 
@@ -608,10 +622,31 @@ export function LeadSheet({
         }
     };
 
-    const handleAddTimelineNote = async () => {
+    const handleAddTimelineEntry = async () => {
         if (!lead || !timelineNote.trim()) return;
 
         try {
+            if (timelineComposerMode === "task") {
+                const assignedEmployeeId = lead.employee_id || employee?.id;
+                if (!assignedEmployeeId) return;
+
+                await createTaskMutation.mutateAsync({
+                    text: timelineNote.trim(),
+                    lead_id: lead.id,
+                    employee_id: assignedEmployeeId,
+                    date: timelineTaskDate || null,
+                    time: timelineTaskTime || null,
+                    status: false,
+                    task_type: timelineTaskType,
+                });
+
+                setTimelineNote("");
+                setTimelineTaskType("qayta_aloqa");
+                setTimelineTaskDate(getTodayDateValue());
+                setTimelineTaskTime("");
+                return;
+            }
+
             await createTimelineNoteMutation.mutateAsync({
                 lead_id: lead.id,
                 pipeline_id: lead.pipeline_id,
@@ -622,7 +657,7 @@ export function LeadSheet({
             });
             setTimelineNote("");
         } catch (error) {
-            console.error("Error creating timeline note:", error);
+            console.error("Error creating timeline entry:", error);
         }
     };
 
@@ -927,25 +962,102 @@ export function LeadSheet({
                         </div>
 
                         <div className="mt-4 border-t pt-3">
+                            <div className="mb-2 flex flex-wrap gap-2">
+                                <Select
+                                    value={timelineComposerMode}
+                                    onValueChange={(value) => setTimelineComposerMode(value as TimelineComposerMode)}
+                                >
+                                    <SelectTrigger className="h-9 w-[140px]">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="note">
+                                            <span className="flex items-center gap-2">
+                                                <MessageSquare className="h-4 w-4" />
+                                                <span>Izoh</span>
+                                            </span>
+                                        </SelectItem>
+                                        <SelectItem value="task">
+                                            <span className="flex items-center gap-2">
+                                                <ListChecks className="h-4 w-4" />
+                                                <span>Eslatma</span>
+                                            </span>
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+
+                                {timelineComposerMode === "task" && (
+                                    <Select
+                                        value={timelineTaskType}
+                                        onValueChange={(value) => setTimelineTaskType(value as TaskType)}
+                                    >
+                                        <SelectTrigger className="h-9 min-w-[150px] flex-1">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {TASK_TYPES.map((type) => (
+                                                <SelectItem key={type.value} value={type.value}>
+                                                    <span className="flex items-center gap-2">
+                                                        <span>{type.icon}</span>
+                                                        <span>{type.label}</span>
+                                                    </span>
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                )}
+                            </div>
+
+                            {timelineComposerMode === "task" && (
+                                <div className="mb-2 grid grid-cols-2 gap-2">
+                                    <Input
+                                        type="date"
+                                        value={timelineTaskDate}
+                                        onChange={(event) => setTimelineTaskDate(event.target.value)}
+                                        className="h-9"
+                                    />
+                                    <Input
+                                        type="time"
+                                        value={timelineTaskTime}
+                                        onChange={(event) => setTimelineTaskTime(event.target.value)}
+                                        className="h-9"
+                                    />
+                                </div>
+                            )}
+
                             <Textarea
-                                placeholder="Izoh yozing..."
+                                placeholder={timelineComposerMode === "task" ? "Eslatma matni..." : "Izoh yozing..."}
                                 value={timelineNote}
                                 onChange={(event) => setTimelineNote(event.target.value)}
-                                rows={2}
+                                rows={timelineComposerMode === "task" ? 3 : 2}
                                 className="resize-none"
                             />
-                            <div className="mt-2 flex justify-end">
+                            <div className="mt-2 flex items-center justify-between gap-3">
+                                {timelineComposerMode === "task" ? (
+                                    <p className="min-w-0 truncate text-xs text-muted-foreground">
+                                        Mas&apos;ul: {lead.employee?.name || employee?.name || "tanlanmagan"}
+                                    </p>
+                                ) : (
+                                    <span />
+                                )}
                                 <Button
                                     size="sm"
-                                    onClick={handleAddTimelineNote}
-                                    disabled={!timelineNote.trim() || createTimelineNoteMutation.isPending}
+                                    onClick={handleAddTimelineEntry}
+                                    disabled={
+                                        !timelineNote.trim()
+                                        || (timelineComposerMode === "task"
+                                            ? createTaskMutation.isPending || !(lead.employee_id || employee?.id)
+                                            : createTimelineNoteMutation.isPending)
+                                    }
                                 >
-                                    {createTimelineNoteMutation.isPending ? (
+                                    {(timelineComposerMode === "task" ? createTaskMutation.isPending : createTimelineNoteMutation.isPending) ? (
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : timelineComposerMode === "task" ? (
+                                        <ListChecks className="mr-2 h-4 w-4" />
                                     ) : (
                                         <MessageSquare className="mr-2 h-4 w-4" />
                                     )}
-                                    Izoh qo&apos;shish
+                                    {timelineComposerMode === "task" ? "Eslatma qo'yish" : "Izoh qo'shish"}
                                 </Button>
                             </div>
                         </div>

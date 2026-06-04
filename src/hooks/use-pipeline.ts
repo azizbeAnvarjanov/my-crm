@@ -46,7 +46,17 @@ export interface Lead {
         id: string;
         name: string;
     };
+    pending_tasks?: {
+        id: string | number;
+        status: boolean;
+    }[] | null;
 }
+
+const LEAD_SELECT_WITH_PENDING_TASKS = `
+    *,
+    employee:xodimlar(id, name),
+    pending_tasks:tasks!tasks_lead_id_fkey(id, status)
+`;
 
 // Query keys
 export const pipelineKeys = {
@@ -217,10 +227,8 @@ export function useLeads(pipelineId: string, searchQuery?: string, employeeId?: 
             const supabase = createClient();
             let query = supabase
                 .from("leads")
-                .select(`
-                    *,
-                    employee:xodimlar(id, name)
-                `)
+                .select(LEAD_SELECT_WITH_PENDING_TASKS)
+                .eq("pending_tasks.status", false)
                 .eq("pipeline_id", pipelineId)
                 .order("created_at", { ascending: false });
 
@@ -287,10 +295,8 @@ export function useStageLeads({
             const normalizedSearch = normalizeLeadSearch(searchQuery);
             let query = supabase
                 .from("leads")
-                .select(`
-                    *,
-                    employee:xodimlar(id, name)
-                `, { count: "exact" })
+                .select(LEAD_SELECT_WITH_PENDING_TASKS, { count: "exact" })
+                .eq("pending_tasks.status", false)
                 .eq("stage_id", stageId)
                 .eq("pipeline_id", pipelineId)
                 .order("updated_at", { ascending: true }) // Oldest updated first
@@ -337,10 +343,8 @@ export function useLoadMoreStageLeads() {
 
             let query = supabase
                 .from("leads")
-                .select(`
-                    *,
-                    employee:xodimlar(id, name)
-                `)
+                .select(LEAD_SELECT_WITH_PENDING_TASKS)
+                .eq("pending_tasks.status", false)
                 .eq("stage_id", stageId)
                 .eq("pipeline_id", pipelineId)
                 .order("updated_at", { ascending: true }) // Oldest updated first

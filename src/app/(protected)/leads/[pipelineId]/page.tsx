@@ -31,17 +31,30 @@ import {
     Trash2,
     Phone,
     User,
-    MapPin,
     Loader2,
     GripVertical,
     X,
     Check,
     Users,
     CalendarDays,
+    BellPlus,
+    Settings2,
+    Save,
+    Clock3,
+    ClipboardCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
     Dialog,
     DialogContent,
@@ -72,6 +85,13 @@ import {
     Stage,
     Lead,
 } from "@/hooks/use-pipeline";
+import {
+    useCreateStageAutomationTrigger,
+    usePipelineStageAutomationTriggers,
+    type StageAutomationTrigger,
+    type StageAutomationAssigneeMode,
+    type StageAutomationTaskType,
+} from "@/hooks/use-stage-automation";
 import { LeadSheet } from "@/components/lead-sheet";
 
 const DEFAULT_STAGE_COLOR = "#6366f1";
@@ -86,6 +106,19 @@ const STAGE_COLORS = [
     "#14b8a6",
     "#3b82f6",
     "#6b7280",
+];
+
+const DEFAULT_STAGE_TRIGGER_NAME = "Etapga o'tganda eslatma";
+const DEFAULT_STAGE_TRIGGER_TEXT = "{{lead_name}} bilan qayta aloqa qilish";
+const STAGE_TRIGGER_TASK_TYPES: { value: StageAutomationTaskType; label: string }[] = [
+    { value: "qayta_aloqa", label: "Qayta aloqa" },
+    { value: "uchrashuv", label: "Uchrashuv" },
+    { value: "eslatma", label: "Eslatma" },
+    { value: "boshqa", label: "Boshqa" },
+];
+const STAGE_TRIGGER_ASSIGNEE_MODES: { value: StageAutomationAssigneeMode; label: string }[] = [
+    { value: "lead_employee", label: "Lid mas'uli" },
+    { value: "current_user", label: "Hozirgi foydalanuvchi" },
 ];
 
 const UZBEK_PHONE_PREFIX = "+998";
@@ -150,6 +183,28 @@ function getTimeAgo(dateString: string): string {
     return `${Math.floor(diffDays / 365)} yil avval`;
 }
 
+function getTaskTypeLabel(taskType: StageAutomationTaskType) {
+    return STAGE_TRIGGER_TASK_TYPES.find((type) => type.value === taskType)?.label || "Zadacha";
+}
+
+function getAssigneeModeLabel(mode: StageAutomationAssigneeMode) {
+    return STAGE_TRIGGER_ASSIGNEE_MODES.find((item) => item.value === mode)?.label || "Lid mas'uli";
+}
+
+function formatDelayMinutes(delayMinutes: number) {
+    if (delayMinutes <= 0) return "Darhol";
+    if (delayMinutes < 60) return `${delayMinutes} daqiqa`;
+
+    const hours = Math.floor(delayMinutes / 60);
+    const minutes = delayMinutes % 60;
+
+    return minutes > 0 ? `${hours} soat ${minutes} daqiqa` : `${hours} soat`;
+}
+
+function getStageTriggers(stageId: string, triggers: StageAutomationTrigger[]) {
+    return triggers.filter((trigger) => String(trigger.stage_id) === String(stageId));
+}
+
 // Draggable Lead Card Component
 function LeadCard({
     lead,
@@ -178,6 +233,7 @@ function LeadCard({
         opacity: !isDragOverlay && (isDragging || isMoving) ? 0.45 : 1,
         zIndex: isDragging || isDragOverlay ? 1000 : 1,
     };
+    const hasPendingTasks = (lead.pending_tasks?.length || 0) > 0;
 
     return (
         <div
@@ -199,8 +255,15 @@ function LeadCard({
                     className="flex items-center gap-2 flex-1"
                     onClick={() => onClick?.(lead)}
                 >
-                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <div className="relative h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
                         <User className="h-4 w-4 text-primary" />
+                        {hasPendingTasks && (
+                            <span
+                                aria-label="Bajarilmagan zadacha bor"
+                                title="Bajarilmagan zadacha bor"
+                                className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-card"
+                            />
+                        )}
                     </div>
                     <div>
                         <p className="text-sm font-medium text-foreground line-clamp-1">
@@ -273,6 +336,173 @@ function LeadDropPreview({
     );
 }
 
+function StageAutomationSettingsBoard({
+    pipelineName,
+    stages,
+    triggers,
+    isLoading,
+    onBack,
+    onSave,
+    onAddTrigger,
+}: {
+    pipelineName?: string;
+    stages: Stage[];
+    triggers: StageAutomationTrigger[];
+    isLoading: boolean;
+    onBack: () => void;
+    onSave: () => void;
+    onAddTrigger: (stage: Stage) => void;
+}) {
+    return (
+        <div className="h-full flex flex-col overflow-hidden bg-[#101010] text-white">
+            <div className="flex-shrink-0 border-b border-white/10 bg-[#101010] px-4 py-3">
+                <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                        <h1 className="text-lg font-semibold truncate">
+                            {pipelineName || "Voronka"} trigger sozlamalari
+                        </h1>
+                        <p className="text-sm text-sky-100/70">
+                            Etaplar bo&apos;yicha avtomatik zadachalar
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="ghost"
+                            onClick={onBack}
+                            className="text-sky-100 hover:bg-white/10 hover:text-white"
+                        >
+                            <ArrowLeft className="h-4 w-4 mr-2" />
+                            Ortga
+                        </Button>
+                        <Button
+                            onClick={onSave}
+                            className="bg-white/10 text-white hover:bg-white/20 border border-white/10"
+                        >
+                            <Save className="h-4 w-4 mr-2" />
+                            Saqlash
+                        </Button>
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-x-auto overflow-y-hidden">
+                {isLoading ? (
+                    <div className="flex h-full items-center justify-center">
+                        <Loader2 className="h-8 w-8 animate-spin text-sky-200" />
+                    </div>
+                ) : stages.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-sky-100/70">
+                        Hali etap yo&apos;q
+                    </div>
+                ) : (
+                    <div className="flex h-full min-w-max">
+                        {stages.map((stage) => {
+                            const stageTriggers = getStageTriggers(stage.id, triggers);
+
+                            return (
+                                <div
+                                    key={stage.id}
+                                    className="flex h-full w-[340px] flex-shrink-0 flex-col border-r border-white/10"
+                                >
+                                    <div className="relative border-b border-white/10 bg-[#101010]">
+                                        <div
+                                            className="h-1"
+                                            style={{ backgroundColor: stage.color || DEFAULT_STAGE_COLOR }}
+                                        />
+                                        <div className="flex min-h-14 items-center justify-between px-4 py-3">
+                                            <div className="min-w-0">
+                                                <p className="truncate text-sm font-bold uppercase tracking-normal">
+                                                    {stage.name}
+                                                </p>
+                                                <p className="text-xs text-sky-100/60">
+                                                    {stageTriggers.length} ta trigger
+                                                </p>
+                                            </div>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() => onAddTrigger(stage)}
+                                                className="h-9 w-9 rounded-full border border-sky-100/30 bg-[#101010] text-[#3cc788] hover:bg-sky-400/20 hover:text-green-500 border-[#3cc788] transition-colors focus-visible:ring-2 focus-visible:ring-green-500"
+                                            >
+                                                <Plus className="h-5 w-5" />
+                                            </Button>
+                                        </div>
+                                    </div>
+
+                                    <div className="border-b border-white/10 px-4 py-3 text-center">
+                                        <Button
+                                            variant="ghost"
+                                            onClick={() => onAddTrigger(stage)}
+                                            className="h-9 text-sky-200 hover:bg-white/10 hover:text-white"
+                                        >
+                                            <BellPlus className="h-4 w-4 mr-2" />
+                                            Trigger qo&apos;shish
+                                        </Button>
+                                    </div>
+
+                                    <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4">
+                                        {stageTriggers.length === 0 ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => onAddTrigger(stage)}
+                                                className="flex h-24 w-full items-center justify-center rounded-md border border-dashed border-sky-100/25 text-sm text-sky-100/60 transition-colors hover:border-[#3cc788] hover:bg-white/5 hover:text-[#3cc788]"
+                                            >
+                                                <Plus className="mr-2 h-4 w-4" />
+                                                Birinchi trigger
+                                            </button>
+                                        ) : (
+                                            stageTriggers.map((trigger) => (
+                                                <div
+                                                    key={trigger.id}
+                                                    className="rounded-md border border-white/10 bg-[#101010] p-3 shadow-sm"
+                                                >
+                                                    <div className="flex items-start gap-3">
+                                                        <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-teal-300/50  text-[#3cc788]">
+                                                            <ClipboardCheck className="h-4 w-4" />
+                                                        </div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="text-xs text-sky-100/70">
+                                                                Etapga o&apos;tganda
+                                                            </p>
+                                                            <p className="mt-0.5 line-clamp-2 text-sm font-semibold leading-5">
+                                                                {trigger.name}
+                                                            </p>
+                                                            <p className="mt-1 line-clamp-2 text-xs text-sky-100/70">
+                                                                {trigger.task_text}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-sky-100/70">
+                                                        <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-1">
+                                                            <Clock3 className="mr-1 h-3 w-3" />
+                                                            {formatDelayMinutes(trigger.delay_minutes)}
+                                                        </span>
+                                                        <span className="rounded-full bg-white/10 px-2 py-1">
+                                                            {getTaskTypeLabel(trigger.task_type)}
+                                                        </span>
+                                                        <span className="rounded-full bg-white/10 px-2 py-1">
+                                                            {getAssigneeModeLabel(trigger.assignee_mode)}
+                                                        </span>
+                                                        {!trigger.enabled && (
+                                                            <span className="rounded-full bg-red-400/15 px-2 py-1 text-red-100">
+                                                                O&apos;chiq
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 // Stage Column Component with infinite scroll
 function StageColumn({
     stage,
@@ -282,6 +512,7 @@ function StageColumn({
     isAdmin,
     onCreateLead,
     onEditStage,
+    onAddTrigger,
     onDeleteStage,
     onLeadClick,
     movingLeadId,
@@ -298,6 +529,7 @@ function StageColumn({
     isAdmin: boolean;
     onCreateLead: (stage: Stage) => void;
     onEditStage: (stage: Stage) => void;
+    onAddTrigger: (stage: Stage) => void;
     onDeleteStage: (stage: Stage) => void;
     onLeadClick: (lead: Lead) => void;
     movingLeadId: string | null;
@@ -415,6 +647,12 @@ function StageColumn({
                                 <DropdownMenuItem onClick={() => onEditStage(stage)}>
                                     <Edit2 className="h-4 w-4 mr-2" />
                                     Tahrirlash
+                                </DropdownMenuItem>
+                            )}
+                            {isAdmin && (
+                                <DropdownMenuItem onClick={() => onAddTrigger(stage)}>
+                                    <BellPlus className="h-4 w-4 mr-2" />
+                                    Trigger qo&apos;shish
                                 </DropdownMenuItem>
                             )}
                             <DropdownMenuItem onClick={() => onCreateLead(stage)}>
@@ -555,12 +793,22 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const deleteStageMutation = useDeleteStage();
     const moveLeadMutation = useMoveLead();
     const updateLeadMutation = useUpdateLead();
+    const createStageAutomationTriggerMutation = useCreateStageAutomationTrigger();
 
+    const [isAutomationSettingsOpen, setIsAutomationSettingsOpen] = useState(false);
     const [activeLead, setActiveLead] = useState<Lead | null>(null);
     const [isAddStageOpen, setIsAddStageOpen] = useState(false);
     const [newStageName, setNewStageName] = useState("");
     const [newStageColor, setNewStageColor] = useState(DEFAULT_STAGE_COLOR);
     const [editingStage, setEditingStage] = useState<Stage | null>(null);
+    const [triggerStage, setTriggerStage] = useState<Stage | null>(null);
+    const [stageTriggerName, setStageTriggerName] = useState(DEFAULT_STAGE_TRIGGER_NAME);
+    const [stageTriggerText, setStageTriggerText] = useState(DEFAULT_STAGE_TRIGGER_TEXT);
+    const [stageTriggerDelayMinutes, setStageTriggerDelayMinutes] = useState("0");
+    const [stageTriggerTaskType, setStageTriggerTaskType] = useState<StageAutomationTaskType>("qayta_aloqa");
+    const [stageTriggerAssigneeMode, setStageTriggerAssigneeMode] = useState<StageAutomationAssigneeMode>("lead_employee");
+    const [stageTriggerEnabled, setStageTriggerEnabled] = useState(true);
+    const [stageTriggerErrors, setStageTriggerErrors] = useState<{ name?: string; text?: string; delay?: string }>({});
     const [creatingLeadStage, setCreatingLeadStage] = useState<Stage | null>(null);
     const [newLeadName, setNewLeadName] = useState("");
     const [newLeadPhone, setNewLeadPhone] = useState(UZBEK_PHONE_PREFIX);
@@ -578,6 +826,10 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const [dragOverStageId, setDragOverStageId] = useState<string | null>(null);
     const [dragOverLeadId, setDragOverLeadId] = useState<string | null>(null);
     const [dragOverPlacement, setDragOverPlacement] = useState<DropPlacement | null>(null);
+    const {
+        data: pipelineAutomationTriggers = [],
+        isLoading: pipelineAutomationTriggersLoading,
+    } = usePipelineStageAutomationTriggers(isAutomationSettingsOpen ? pipelineId : null);
 
     // Scroll container ref for horizontal scrolling
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -926,6 +1178,72 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         setIsAddStageOpen(false);
     };
 
+    const resetStageTriggerDialog = () => {
+        setTriggerStage(null);
+        setStageTriggerName(DEFAULT_STAGE_TRIGGER_NAME);
+        setStageTriggerText(DEFAULT_STAGE_TRIGGER_TEXT);
+        setStageTriggerDelayMinutes("0");
+        setStageTriggerTaskType("qayta_aloqa");
+        setStageTriggerAssigneeMode("lead_employee");
+        setStageTriggerEnabled(true);
+        setStageTriggerErrors({});
+    };
+
+    const handleOpenAddTrigger = (stage: Stage) => {
+        setTriggerStage(stage);
+        setStageTriggerName(DEFAULT_STAGE_TRIGGER_NAME);
+        setStageTriggerText(DEFAULT_STAGE_TRIGGER_TEXT);
+        setStageTriggerDelayMinutes("0");
+        setStageTriggerTaskType("qayta_aloqa");
+        setStageTriggerAssigneeMode("lead_employee");
+        setStageTriggerEnabled(true);
+        setStageTriggerErrors({});
+    };
+
+    const handleCreateStageTrigger = async () => {
+        if (!triggerStage) return;
+
+        const trimmedName = stageTriggerName.trim();
+        const trimmedText = stageTriggerText.trim();
+        const delayMinutes = Number(stageTriggerDelayMinutes);
+        const errors: { name?: string; text?: string; delay?: string } = {};
+
+        if (!trimmedName) {
+            errors.name = "Trigger nomini kiriting";
+        }
+
+        if (!trimmedText) {
+            errors.text = "Zadacha matnini kiriting";
+        }
+
+        if (!Number.isInteger(delayMinutes) || delayMinutes < 0) {
+            errors.delay = "Kechikish 0 yoki undan katta butun son bo'lishi kerak";
+        }
+
+        if (Object.keys(errors).length > 0) {
+            setStageTriggerErrors(errors);
+            return;
+        }
+
+        try {
+            await createStageAutomationTriggerMutation.mutateAsync({
+                pipeline_id: pipelineId,
+                stage_id: triggerStage.id,
+                name: trimmedName,
+                delay_minutes: delayMinutes,
+                task_text: trimmedText,
+                task_type: stageTriggerTaskType,
+                assignee_mode: stageTriggerAssigneeMode,
+                enabled: stageTriggerEnabled,
+            });
+
+            resetStageTriggerDialog();
+        } catch (error) {
+            console.error("Error creating stage trigger:", error);
+            alert("Trigger yaratib bo'lmadi");
+        }
+    };
+
     const handleCreateLead = async () => {
         const trimmedName = newLeadName.trim();
         const errors: { name?: string; phone?: string } = {};
@@ -1050,6 +1368,18 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
     return (
         <div className="h-screen flex flex-col overflow-hidden">
+            {isAutomationSettingsOpen ? (
+                <StageAutomationSettingsBoard
+                    pipelineName={pipeline?.name}
+                    stages={stages}
+                    triggers={pipelineAutomationTriggers}
+                    isLoading={stagesLoading || pipelineAutomationTriggersLoading}
+                    onBack={() => setIsAutomationSettingsOpen(false)}
+                    onSave={() => setIsAutomationSettingsOpen(false)}
+                    onAddTrigger={handleOpenAddTrigger}
+                />
+            ) : (
+                <>
             {/* Header */}
             <div className="flex-shrink-0 p-4 border-b border-border bg-background">
                 <div className="flex items-center justify-between">
@@ -1097,9 +1427,19 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
                         {/* Add Stage Button (Admin only) */}
                         {isAdmin && (
-                            <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
-                                <Plus className="h-4 w-4" />
-                            </Button>
+                            <>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setIsAutomationSettingsOpen(true)}
+                                    className="border-border bg-card text-foreground hover:bg-accent"
+                                >
+                                    <Settings2 className="h-4 w-4 mr-2" />
+                                    Sozlash
+                                </Button>
+                                <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
+                                    <Plus className="h-4 w-4" />
+                                </Button>
+                            </>
                         )}
                     </div>
                 </div>
@@ -1148,6 +1488,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                                     isAdmin={isAdmin}
                                     onCreateLead={handleOpenCreateLead}
                                     onEditStage={setEditingStage}
+                                    onAddTrigger={handleOpenAddTrigger}
                                     onDeleteStage={handleDeleteStage}
                                     onLeadClick={handleLeadClick}
                                     movingLeadId={movingLeadId}
@@ -1197,6 +1538,8 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         />
                     </div>
                 </div>
+            )}
+                </>
             )}
 
             {/* Add Stage Dialog */}
@@ -1255,6 +1598,140 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                                 <Plus className="h-4 w-4 mr-2" />
                             )}
                             Qo&apos;shish
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Add Stage Trigger Dialog */}
+            <Dialog
+                open={!!triggerStage}
+                onOpenChange={(open) => {
+                    if (!open) resetStageTriggerDialog();
+                }}
+            >
+                <DialogContent className="bg-card border-border">
+                    <DialogHeader>
+                        <DialogTitle>
+                            Trigger qo&apos;shish{triggerStage ? `: ${triggerStage.name}` : ""}
+                        </DialogTitle>
+                        <DialogDescription className="hidden" />
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">
+                                Trigger nomi <span className="text-destructive">*</span>
+                            </label>
+                            <Input
+                                value={stageTriggerName}
+                                onChange={(e) => {
+                                    setStageTriggerName(e.target.value);
+                                    setStageTriggerErrors((prev) => (prev.name ? { ...prev, name: undefined } : prev));
+                                }}
+                            />
+                            {stageTriggerErrors.name && (
+                                <p className="text-sm text-destructive">{stageTriggerErrors.name}</p>
+                            )}
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">
+                                Zadacha matni <span className="text-destructive">*</span>
+                            </label>
+                            <Textarea
+                                value={stageTriggerText}
+                                onChange={(e) => {
+                                    setStageTriggerText(e.target.value);
+                                    setStageTriggerErrors((prev) => (prev.text ? { ...prev, text: undefined } : prev));
+                                }}
+                                className="min-h-24"
+                            />
+                            {stageTriggerErrors.text && (
+                                <p className="text-sm text-destructive">{stageTriggerErrors.text}</p>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Kechikish (daqiqa)</label>
+                                <Input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={stageTriggerDelayMinutes}
+                                    onChange={(e) => {
+                                        setStageTriggerDelayMinutes(e.target.value);
+                                        setStageTriggerErrors((prev) => (prev.delay ? { ...prev, delay: undefined } : prev));
+                                    }}
+                                />
+                                {stageTriggerErrors.delay && (
+                                    <p className="text-sm text-destructive">{stageTriggerErrors.delay}</p>
+                                )}
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Zadacha turi</label>
+                                <Select
+                                    value={stageTriggerTaskType}
+                                    onValueChange={(value) => setStageTriggerTaskType(value as StageAutomationTaskType)}
+                                >
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {STAGE_TRIGGER_TASK_TYPES.map((type) => (
+                                            <SelectItem key={type.value} value={type.value}>
+                                                {type.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Biriktirish</label>
+                            <Select
+                                value={stageTriggerAssigneeMode}
+                                onValueChange={(value) => setStageTriggerAssigneeMode(value as StageAutomationAssigneeMode)}
+                            >
+                                <SelectTrigger className="w-full">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {STAGE_TRIGGER_ASSIGNEE_MODES.map((mode) => (
+                                        <SelectItem key={mode.value} value={mode.value}>
+                                            {mode.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                            <label className="text-sm font-medium">Faol</label>
+                            <Switch checked={stageTriggerEnabled} onCheckedChange={setStageTriggerEnabled} />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={resetStageTriggerDialog}>
+                            Bekor qilish
+                        </Button>
+                        <Button
+                            onClick={handleCreateStageTrigger}
+                            disabled={
+                                createStageAutomationTriggerMutation.isPending
+                                || !stageTriggerName.trim()
+                                || !stageTriggerText.trim()
+                            }
+                            className="btn-primary"
+                        >
+                            {createStageAutomationTriggerMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            ) : (
+                                <BellPlus className="h-4 w-4 mr-2" />
+                            )}
+                            Saqlash
                         </Button>
                     </DialogFooter>
                 </DialogContent>

@@ -66,6 +66,10 @@ export const taskKeys = {
     detail: (id: string) => [...taskKeys.all, id] as const,
 };
 
+const leadTimelineKeys = {
+    byLead: (leadId: string) => ["leadTimelineEvents", leadId] as const,
+};
+
 interface UseTasksOptions {
     employeeId?: string;
     isAdmin?: boolean;
@@ -250,6 +254,7 @@ export function useCreateTask() {
             }
             if (data.lead_id) {
                 queryClient.invalidateQueries({ queryKey: taskKeys.byLead(data.lead_id) });
+                queryClient.invalidateQueries({ queryKey: leadTimelineKeys.byLead(data.lead_id) });
             }
         },
     });
@@ -301,7 +306,7 @@ export function useToggleTaskStatus() {
     return useMutation({
         mutationFn: async ({ id, status, result }: { id: string; status: boolean; result?: string }) => {
             const supabase = createClient();
-            const updateData: any = { status };
+            const updateData: Partial<Pick<Task, "status" | "result">> = { status };
             if (result !== undefined) {
                 updateData.result = result;
             }
@@ -327,6 +332,11 @@ export function useToggleTaskStatus() {
         },
         onSettled: () => {
             queryClient.invalidateQueries({ queryKey: taskKeys.all });
+        },
+        onSuccess: (data) => {
+            if (data.lead_id) {
+                queryClient.invalidateQueries({ queryKey: leadTimelineKeys.byLead(data.lead_id) });
+            }
         },
     });
 }

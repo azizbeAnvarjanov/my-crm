@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react"
-import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle } from "lucide-react";
+import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle, History, MessageSquare, GitBranch, UserCog, ListChecks, CheckCircle2, RotateCcw, FileText, type LucideIcon } from "lucide-react";
 import {
     Sheet,
     SheetContent,
@@ -30,6 +30,7 @@ import { useTasksByLead, useCreateTask, useUpdateTask, useDeleteTask, useToggleT
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
 import { Call, getCallStatusLabel, normalizeCallRow } from "@/hooks/use-calls";
+import { useCreateLeadTimelineNote, useLeadTimelineEvents, type LeadTimelineEvent, type LeadTimelineMetadata } from "@/hooks/use-lead-timeline";
 import {
     Dialog,
     DialogContent,
@@ -57,6 +58,196 @@ interface LeadSheetProps {
 type LeadUpdate = Partial<Omit<Lead, "date_of_year">> & {
     date_of_year?: string | null;
 };
+
+type TimelineItem = {
+    id: string;
+    eventType: string;
+    title: string;
+    body: string | null;
+    occurredAt: string;
+    actorName?: string | null;
+    employeeName?: string | null;
+    metadata?: LeadTimelineMetadata;
+    call?: Call;
+};
+
+type TimelineFieldChange = {
+    field?: unknown;
+    label?: unknown;
+    old?: unknown;
+    new?: unknown;
+};
+
+function formatTimelineDateTime(value: string): string {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return "-";
+    }
+
+    return `${date.toLocaleDateString("uz-UZ")} ${date.toLocaleTimeString("uz-UZ", {
+        hour: "2-digit",
+        minute: "2-digit",
+    })}`;
+}
+
+function formatTimelineValue(value: unknown): string {
+    if (value === null || value === undefined || value === "") {
+        return "-";
+    }
+
+    return String(value);
+}
+
+function getTimelineChanges(metadata?: LeadTimelineMetadata): TimelineFieldChange[] {
+    const changes = metadata?.changes;
+    return Array.isArray(changes) ? changes : [];
+}
+
+function getTimelineItemStyle(eventType: string, call?: Call): {
+    Icon: LucideIcon;
+    iconClassName: string;
+    badgeClassName: string;
+} {
+    if (call) {
+        if (!call.answered) {
+            return {
+                Icon: PhoneCall,
+                iconClassName: "border-red-500/40 bg-red-500/10 text-red-500",
+                badgeClassName: "border-red-500/40 text-red-500",
+            };
+        }
+
+        if (call.direction === "incoming") {
+            return {
+                Icon: PhoneIncoming,
+                iconClassName: "border-blue-500/40 bg-blue-500/10 text-blue-500",
+                badgeClassName: "border-blue-500/40 text-blue-500",
+            };
+        }
+
+        return {
+            Icon: PhoneOutgoing,
+            iconClassName: "border-emerald-500/40 bg-emerald-500/10 text-emerald-500",
+            badgeClassName: "border-emerald-500/40 text-emerald-500",
+        };
+    }
+
+    switch (eventType) {
+        case "lead_created":
+            return {
+                Icon: History,
+                iconClassName: "border-sky-500/40 bg-sky-500/10 text-sky-500",
+                badgeClassName: "border-sky-500/40 text-sky-500",
+            };
+        case "stage_changed":
+            return {
+                Icon: GitBranch,
+                iconClassName: "border-amber-500/40 bg-amber-500/10 text-amber-500",
+                badgeClassName: "border-amber-500/40 text-amber-500",
+            };
+        case "responsible_changed":
+            return {
+                Icon: UserCog,
+                iconClassName: "border-violet-500/40 bg-violet-500/10 text-violet-500",
+                badgeClassName: "border-violet-500/40 text-violet-500",
+            };
+        case "task_created":
+            return {
+                Icon: ListChecks,
+                iconClassName: "border-orange-500/40 bg-orange-500/10 text-orange-500",
+                badgeClassName: "border-orange-500/40 text-orange-500",
+            };
+        case "task_completed":
+            return {
+                Icon: CheckCircle2,
+                iconClassName: "border-green-500/40 bg-green-500/10 text-green-500",
+                badgeClassName: "border-green-500/40 text-green-500",
+            };
+        case "task_reopened":
+            return {
+                Icon: RotateCcw,
+                iconClassName: "border-yellow-500/40 bg-yellow-500/10 text-yellow-500",
+                badgeClassName: "border-yellow-500/40 text-yellow-500",
+            };
+        case "note_added":
+            return {
+                Icon: MessageSquare,
+                iconClassName: "border-cyan-500/40 bg-cyan-500/10 text-cyan-500",
+                badgeClassName: "border-cyan-500/40 text-cyan-500",
+            };
+        default:
+            return {
+                Icon: FileText,
+                iconClassName: "border-muted-foreground/30 bg-muted text-muted-foreground",
+                badgeClassName: "border-muted-foreground/30 text-muted-foreground",
+            };
+    }
+}
+
+function LeadTimelineItemCard({ item }: { item: TimelineItem }) {
+    const style = getTimelineItemStyle(item.eventType, item.call);
+    const Icon = style.Icon;
+    const changes = getTimelineChanges(item.metadata);
+    const badgeText = item.call ? getCallStatusLabel(item.call) : item.eventType.replaceAll("_", " ");
+
+    return (
+        <div className="relative flex gap-3">
+            <div className="flex flex-col items-center">
+                <div className={`flex h-9 w-9 items-center justify-center rounded-full border ${style.iconClassName}`}>
+                    <Icon className="h-4 w-4" />
+                </div>
+                <div className="mt-2 h-full w-px bg-border" />
+            </div>
+
+            <div className="min-w-0 flex-1 rounded-md border border-border bg-card/70 p-3">
+                <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{item.title}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                            {formatTimelineDateTime(item.occurredAt)}
+                            {item.actorName ? ` dan ${item.actorName}` : ""}
+                            {!item.actorName && item.employeeName ? ` uchun ${item.employeeName}` : ""}
+                        </p>
+                    </div>
+                    <Badge variant="outline" className={`shrink-0 text-[10px] ${style.badgeClassName}`}>
+                        {badgeText}
+                    </Badge>
+                </div>
+
+                {item.body && (
+                    <p className="mt-2 break-words text-sm text-foreground/90">{item.body}</p>
+                )}
+
+                {changes.length > 0 && (
+                    <div className="mt-3 space-y-1.5 rounded-md bg-muted/40 p-2">
+                        {changes.slice(0, 4).map((change, index) => (
+                            <div key={`${formatTimelineValue(change.field)}-${index}`} className="text-xs">
+                                <span className="font-medium">
+                                    {formatTimelineValue(change.label || change.field)}
+                                </span>
+                                <span className="text-muted-foreground">
+                                    {`: ${formatTimelineValue(change.old)} -> ${formatTimelineValue(change.new)}`}
+                                </span>
+                            </div>
+                        ))}
+                        {changes.length > 4 && (
+                            <p className="text-xs text-muted-foreground">Yana {changes.length - 4} ta maydon</p>
+                        )}
+                    </div>
+                )}
+
+                {item.call && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span>{item.call.direction === "incoming" ? "Kiruvchi" : "Chiquvchi"}</span>
+                        <span>{formatDuration(item.call.duration)}</span>
+                        {item.call.record_url && <span>Yozuv bor</span>}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
 
 function getCallPhoneVariants(phone: string): string[] {
     const digits = phone.replace(/\D/g, "");
@@ -143,18 +334,46 @@ export function LeadSheet({
     const [editingTask, setEditingTask] = useState<Task | null>(null);
     const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
     const [taskResult, setTaskResult] = useState("");
+    const [timelineNote, setTimelineNote] = useState("");
 
     const { data: employee } = useEmployee();
     const { data: tasks = [], isLoading: tasksLoading } = useTasksByLead(lead?.id || "");
+    const { data: timelineEvents = [], isLoading: timelineLoading } = useLeadTimelineEvents(lead?.id);
     const createTaskMutation = useCreateTask();
     const updateTaskMutation = useUpdateTask();
     const deleteTaskMutation = useDeleteTask();
     const toggleTaskMutation = useToggleTaskStatus();
+    const createTimelineNoteMutation = useCreateLeadTimelineNote();
 
     const today = new Date().toISOString().split("T")[0];
     const todayPendingTasks = useMemo(() => tasks.filter(t => !t.status && t.date === today), [tasks, today]);
     const pendingTasks = useMemo(() => tasks.filter(t => !t.status), [tasks]);
     const completedTasks = useMemo(() => tasks.filter(t => t.status), [tasks]);
+    const timelineItems = useMemo(() => {
+        const eventItems: TimelineItem[] = timelineEvents.map((event: LeadTimelineEvent) => ({
+            id: `event-${event.id}`,
+            eventType: event.event_type,
+            title: event.title,
+            body: event.body,
+            occurredAt: event.occurred_at || event.created_at,
+            actorName: event.actor?.name,
+            employeeName: event.employee?.name,
+            metadata: event.metadata,
+        }));
+
+        const callItems: TimelineItem[] = calls.map((call) => ({
+            id: `call-${call.id}`,
+            eventType: call.answered ? `call_${call.direction}` : "call_missed",
+            title: call.direction === "incoming" ? "Kiruvchi qo'ng'iroq" : "Chiquvchi qo'ng'iroq",
+            body: call.phone || null,
+            occurredAt: call.called_at || call.created_at,
+            call,
+        }));
+
+        return [...eventItems, ...callItems]
+            .filter((item) => item.occurredAt)
+            .sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
+    }, [calls, timelineEvents]);
 
     useEffect(() => {
         if (lead) {
@@ -170,6 +389,7 @@ export function LeadSheet({
                 stage_id: lead.stage_id,
             });
             setHasChanges(false);
+            setTimelineNote("");
         }
     }, [lead]);
 
@@ -388,18 +608,36 @@ export function LeadSheet({
         }
     };
 
+    const handleAddTimelineNote = async () => {
+        if (!lead || !timelineNote.trim()) return;
+
+        try {
+            await createTimelineNoteMutation.mutateAsync({
+                lead_id: lead.id,
+                pipeline_id: lead.pipeline_id,
+                stage_id: lead.stage_id,
+                employee_id: lead.employee_id || null,
+                actor_employee_id: employee?.id || null,
+                body: timelineNote.trim(),
+            });
+            setTimelineNote("");
+        } catch (error) {
+            console.error("Error creating timeline note:", error);
+        }
+    };
+
     if (!lead) return null;
 
     return (
         <Sheet open={isOpen} onOpenChange={onClose}>
-            <SheetContent className="w-full sm:max-w-[97vw] overflow-y-auto p-0">
+            <SheetContent className="w-full sm:max-w-[97vw] overflow-hidden p-0">
                 <SheetHeader className="sr-only">
                     <SheetTitle>{lead.name ? `${lead.name} tafsilotlari` : "Lead tafsilotlari"}</SheetTitle>
                     <SheetDescription>Lead tafsilotlarini korish va tahrirlash</SheetDescription>
                 </SheetHeader>
-                <div className="flex h-full">
+                <div className="flex h-full min-w-0">
                     {/* left Side - Lead Details */}
-                    <div className="w-[30%] p-4 overflow-y-auto border-r">
+                    <div className="w-[30%] min-w-0 border-r p-4 overflow-y-auto">
                         <SheetHeader className="">
                             <div className="space-y-4">
                                 {/* <div className="flex-1">
@@ -653,8 +891,68 @@ export function LeadSheet({
                         </div>
                     </div>
 
+                    {/* Middle - Lead Timeline */}
+                    <div className="flex w-[42%] min-w-0 flex-col border-r border-border bg-background p-4">
+                        <div className="mb-4 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                                <h3 className="truncate text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Tarix
+                                </h3>
+                                <p className="text-xs text-muted-foreground">
+                                    Lid bo&apos;yicha harakatlar va qo&apos;ng&apos;iroqlar
+                                </p>
+                            </div>
+                            <Badge variant="outline" className="shrink-0">
+                                {timelineItems.length}
+                            </Badge>
+                        </div>
+
+                        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                            {timelineLoading || loadingCalls ? (
+                                <div className="flex justify-center py-10">
+                                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                                </div>
+                            ) : timelineItems.length === 0 ? (
+                                <div className="flex h-full flex-col items-center justify-center text-center text-muted-foreground">
+                                    <History className="mb-4 h-12 w-12 opacity-50" />
+                                    <p>Tarix hali yo&apos;q</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {timelineItems.map((item) => (
+                                        <LeadTimelineItemCard key={item.id} item={item} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="mt-4 border-t pt-3">
+                            <Textarea
+                                placeholder="Izoh yozing..."
+                                value={timelineNote}
+                                onChange={(event) => setTimelineNote(event.target.value)}
+                                rows={2}
+                                className="resize-none"
+                            />
+                            <div className="mt-2 flex justify-end">
+                                <Button
+                                    size="sm"
+                                    onClick={handleAddTimelineNote}
+                                    disabled={!timelineNote.trim() || createTimelineNoteMutation.isPending}
+                                >
+                                    {createTimelineNoteMutation.isPending ? (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <MessageSquare className="mr-2 h-4 w-4" />
+                                    )}
+                                    Izoh qo&apos;shish
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* right Side - Calls & Notes */}
-                    <div className="w-[70%] border-r border-border p-6 overflow-y-auto">
+                    <div className="flex w-[28%] min-w-0 flex-col overflow-hidden border-r border-border p-4">
                         {todayPendingTasks.length > 0 && (
                             <div className="mb-4 p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
                                 <div className="flex items-center gap-2 mb-2">
@@ -696,7 +994,7 @@ export function LeadSheet({
                             </div>
                         )}
 
-                        <Tabs defaultValue="calls" className="h-full flex flex-col">
+                        <Tabs defaultValue="calls" className="flex min-h-0 flex-1 flex-col">
                             <TabsList className="grid w-full grid-cols-2 mb-4">
                                 <TabsTrigger value="calls">Qo&apos;ng&apos;iroqlar</TabsTrigger>
                                 <TabsTrigger value="notes" className="relative">
@@ -709,7 +1007,7 @@ export function LeadSheet({
                                 </TabsTrigger>
                             </TabsList>
 
-                            <TabsContent value="calls" className="flex-1 overflow-y-auto space-y-2">
+                            <TabsContent value="calls" className="min-h-0 flex-1 overflow-y-auto space-y-2">
                                 {loadingCalls ? (
                                     <div className="flex justify-center py-8">
                                         <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -795,7 +1093,7 @@ export function LeadSheet({
                                 )}
                             </TabsContent>
 
-                            <TabsContent value="notes" className="flex-1 overflow-y-auto space-y-3">
+                            <TabsContent value="notes" className="min-h-0 flex-1 overflow-y-auto space-y-3">
                                 <Card className="border-border">
                                     <CardHeader className="p-3">
                                         <CardTitle className="text-sm">Yangi vazifa</CardTitle>

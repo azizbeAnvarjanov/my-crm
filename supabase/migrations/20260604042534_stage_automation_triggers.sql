@@ -139,17 +139,18 @@ CREATE TABLE IF NOT EXISTS stage_automation_triggers (
   event_type TEXT NOT NULL DEFAULT 'lead_entered_stage'
     CHECK (event_type IN ('lead_entered_stage')),
   action_type TEXT NOT NULL DEFAULT 'create_task'
-    CHECK (action_type IN ('create_task')),
+    CHECK (action_type IN ('create_task', 'change_responsible')),
   enabled BOOLEAN NOT NULL DEFAULT true,
   delay_minutes INTEGER NOT NULL DEFAULT 0 CHECK (delay_minutes >= 0),
   schedule_timezone TEXT NOT NULL DEFAULT 'Asia/Tashkent'
     CHECK (length(trim(schedule_timezone)) > 0),
-  task_text TEXT NOT NULL,
+  task_text TEXT,
   task_type TEXT NOT NULL DEFAULT 'qayta_aloqa'
     CHECK (task_type IN ('qayta_aloqa', 'uchrashuv', 'eslatma', 'boshqa')),
   assignee_mode TEXT NOT NULL DEFAULT 'lead_employee'
     CHECK (assignee_mode IN ('lead_employee', 'current_user', 'specific_employee')),
   assignee_employee_id BIGINT REFERENCES xodimlar(id) ON DELETE SET NULL,
+  target_employee_id BIGINT REFERENCES xodimlar(id) ON DELETE SET NULL,
   created_by UUID DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -157,8 +158,29 @@ CREATE TABLE IF NOT EXISTS stage_automation_triggers (
     CHECK (
       assignee_mode <> 'specific_employee'
       OR assignee_employee_id IS NOT NULL
+    ),
+  CONSTRAINT stage_automation_triggers_action_data_check
+    CHECK (
+      (action_type = 'create_task' AND task_text IS NOT NULL)
+      OR (action_type = 'change_responsible' AND target_employee_id IS NOT NULL)
     )
 );
+
+ALTER TABLE stage_automation_triggers ADD COLUMN IF NOT EXISTS target_employee_id BIGINT REFERENCES xodimlar(id) ON DELETE SET NULL;
+ALTER TABLE stage_automation_triggers ALTER COLUMN task_text DROP NOT NULL;
+
+ALTER TABLE stage_automation_triggers DROP CONSTRAINT IF EXISTS stage_automation_triggers_action_type_check;
+ALTER TABLE stage_automation_triggers
+  ADD CONSTRAINT stage_automation_triggers_action_type_check
+  CHECK (action_type IN ('create_task', 'change_responsible'));
+
+ALTER TABLE stage_automation_triggers DROP CONSTRAINT IF EXISTS stage_automation_triggers_action_data_check;
+ALTER TABLE stage_automation_triggers
+  ADD CONSTRAINT stage_automation_triggers_action_data_check
+  CHECK (
+    (action_type = 'create_task' AND task_text IS NOT NULL)
+    OR (action_type = 'change_responsible' AND target_employee_id IS NOT NULL)
+  ) NOT VALID;
 
 CREATE INDEX IF NOT EXISTS idx_stage_automation_triggers_pipeline_id
   ON stage_automation_triggers(pipeline_id);
@@ -168,6 +190,8 @@ CREATE INDEX IF NOT EXISTS idx_stage_automation_triggers_enabled
   ON stage_automation_triggers(enabled);
 CREATE INDEX IF NOT EXISTS idx_stage_automation_triggers_assignee_employee_id
   ON stage_automation_triggers(assignee_employee_id);
+CREATE INDEX IF NOT EXISTS idx_stage_automation_triggers_target_employee_id
+  ON stage_automation_triggers(target_employee_id);
 
 ALTER TABLE stage_automation_triggers ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, UPDATE, DELETE ON stage_automation_triggers TO authenticated;
@@ -287,6 +311,7 @@ DECLARE
   trigger_row stage_automation_triggers%ROWTYPE;
   assigned_employee_id BIGINT;
   current_employee_id BIGINT;
+  effective_employee_id BIGINT;
   new_stage_name TEXT;
   scheduled_at TIMESTAMP WITH TIME ZONE;
 BEGIN
@@ -305,6 +330,8 @@ BEGIN
   FROM stages
   WHERE id = NEW.stage_id;
 
+  effective_employee_id := NEW.employee_id;
+
   FOR trigger_row IN
     SELECT *
     FROM stage_automation_triggers
@@ -312,18 +339,30 @@ BEGIN
       AND stage_id = NEW.stage_id
       AND enabled = true
       AND event_type = 'lead_entered_stage'
-      AND action_type = 'create_task'
     ORDER BY created_at ASC
   LOOP
+    IF trigger_row.action_type = 'change_responsible' THEN
+      IF trigger_row.target_employee_id IS NOT NULL THEN
+        UPDATE leads
+        SET employee_id = trigger_row.target_employee_id,
+            updated_at = NOW()
+        WHERE id = NEW.id;
+
+        effective_employee_id := trigger_row.target_employee_id;
+      END IF;
+
+      CONTINUE;
+    END IF;
+
     assigned_employee_id := CASE trigger_row.assignee_mode
       WHEN 'specific_employee' THEN trigger_row.assignee_employee_id
       WHEN 'current_user' THEN current_employee_id
-      ELSE NEW.employee_id
+      ELSE effective_employee_id
     END;
 
     assigned_employee_id := COALESCE(
       assigned_employee_id,
-      NEW.employee_id,
+      effective_employee_id,
       current_employee_id
     );
 

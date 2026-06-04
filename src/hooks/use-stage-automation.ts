@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 
 export type StageAutomationTaskType = "qayta_aloqa" | "uchrashuv" | "eslatma" | "boshqa";
 export type StageAutomationAssigneeMode = "lead_employee" | "current_user" | "specific_employee";
+export type StageAutomationActionType = "create_task" | "change_responsible";
 
 export interface StageAutomationTrigger {
     id: number;
@@ -12,14 +13,15 @@ export interface StageAutomationTrigger {
     stage_id: number;
     name: string;
     event_type: "lead_entered_stage";
-    action_type: "create_task";
+    action_type: StageAutomationActionType;
     enabled: boolean;
     delay_minutes: number;
     schedule_timezone: string;
-    task_text: string;
+    task_text: string | null;
     task_type: StageAutomationTaskType;
     assignee_mode: StageAutomationAssigneeMode;
     assignee_employee_id: number | null;
+    target_employee_id: number | null;
     created_by: string | null;
     created_at?: string;
     updated_at?: string;
@@ -28,12 +30,14 @@ export interface StageAutomationTrigger {
 export interface CreateStageAutomationTriggerInput {
     pipeline_id: string;
     stage_id: string | number;
+    action_type?: StageAutomationActionType;
     name: string;
     delay_minutes: number;
-    task_text: string;
+    task_text?: string | null;
     task_type?: StageAutomationTaskType;
     assignee_mode?: StageAutomationAssigneeMode;
     assignee_employee_id?: string | number | null;
+    target_employee_id?: string | number | null;
     enabled?: boolean;
 }
 
@@ -103,6 +107,10 @@ export function useCreateStageAutomationTrigger() {
             const assigneeEmployeeId = input.assignee_employee_id
                 ? normalizeBigintId(input.assignee_employee_id, "Xodim")
                 : null;
+            const targetEmployeeId = input.target_employee_id
+                ? normalizeBigintId(input.target_employee_id, "Xodim")
+                : null;
+            const actionType = input.action_type || "create_task";
 
             const { data, error } = await supabase
                 .from("stage_automation_triggers")
@@ -111,14 +119,15 @@ export function useCreateStageAutomationTrigger() {
                     stage_id: stageId,
                     name: input.name,
                     event_type: "lead_entered_stage",
-                    action_type: "create_task",
+                    action_type: actionType,
                     enabled: input.enabled ?? true,
-                    delay_minutes: input.delay_minutes,
+                    delay_minutes: actionType === "change_responsible" ? 0 : input.delay_minutes,
                     schedule_timezone: "Asia/Tashkent",
-                    task_text: input.task_text,
+                    task_text: actionType === "create_task" ? input.task_text : null,
                     task_type: input.task_type || "qayta_aloqa",
                     assignee_mode: input.assignee_mode || "lead_employee",
                     assignee_employee_id: assigneeEmployeeId,
+                    target_employee_id: targetEmployeeId,
                 })
                 .select()
                 .single();

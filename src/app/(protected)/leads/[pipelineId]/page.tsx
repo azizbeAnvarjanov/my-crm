@@ -85,10 +85,12 @@ import {
     Stage,
     Lead,
 } from "@/hooks/use-pipeline";
+import { useBranchEmployees } from "@/hooks/use-tasks";
 import {
     useCreateStageAutomationTrigger,
     usePipelineStageAutomationTriggers,
     type StageAutomationTrigger,
+    type StageAutomationActionType,
     type StageAutomationAssigneeMode,
     type StageAutomationTaskType,
 } from "@/hooks/use-stage-automation";
@@ -110,6 +112,15 @@ const STAGE_COLORS = [
 
 const DEFAULT_STAGE_TRIGGER_NAME = "Etapga o'tganda eslatma";
 const DEFAULT_STAGE_TRIGGER_TEXT = "{{lead_name}} bilan qayta aloqa qilish";
+const DEFAULT_RESPONSIBLE_TRIGGER_NAME = "Mas'ul shaxsni o'zgartirish";
+const STAGE_TRIGGER_ACTION_TYPES: {
+    value: StageAutomationActionType;
+    label: string;
+    icon: typeof ClipboardCheck;
+}[] = [
+        { value: "create_task", label: "Zadacha yaratish", icon: ClipboardCheck },
+        { value: "change_responsible", label: "Mas'ulni o'zgartirish", icon: Users },
+    ];
 const STAGE_TRIGGER_TASK_TYPES: { value: StageAutomationTaskType; label: string }[] = [
     { value: "qayta_aloqa", label: "Qayta aloqa" },
     { value: "uchrashuv", label: "Uchrashuv" },
@@ -189,6 +200,15 @@ function getTaskTypeLabel(taskType: StageAutomationTaskType) {
 
 function getAssigneeModeLabel(mode: StageAutomationAssigneeMode) {
     return STAGE_TRIGGER_ASSIGNEE_MODES.find((item) => item.value === mode)?.label || "Lid mas'uli";
+}
+
+function getActionTypeLabel(actionType: StageAutomationActionType) {
+    return STAGE_TRIGGER_ACTION_TYPES.find((type) => type.value === actionType)?.label || "Trigger";
+}
+
+function getEmployeeName(employeeId: number | null | undefined, employees: { id: string; name: string }[]) {
+    if (!employeeId) return "Xodim tanlanmagan";
+    return employees.find((employee) => String(employee.id) === String(employeeId))?.name || `Xodim #${employeeId}`;
 }
 
 function formatDelayMinutes(delayMinutes: number) {
@@ -340,6 +360,7 @@ function StageAutomationSettingsBoard({
     pipelineName,
     stages,
     triggers,
+    employees,
     isLoading,
     onBack,
     onSave,
@@ -348,14 +369,15 @@ function StageAutomationSettingsBoard({
     pipelineName?: string;
     stages: Stage[];
     triggers: StageAutomationTrigger[];
+    employees: { id: string; name: string }[];
     isLoading: boolean;
     onBack: () => void;
     onSave: () => void;
     onAddTrigger: (stage: Stage) => void;
 }) {
     return (
-        <div className="h-full flex flex-col overflow-hidden bg-[#101010] text-white">
-            <div className="flex-shrink-0 border-b border-white/10 bg-[#101010] px-4 py-3">
+        <div className="h-full flex flex-col overflow-hidden bg-[#171717] text-white">
+            <div className="flex-shrink-0 border-b border-white/10 bg-[#171717] px-4 py-3">
                 <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0">
                         <h1 className="text-lg font-semibold truncate">
@@ -404,7 +426,7 @@ function StageAutomationSettingsBoard({
                                     key={stage.id}
                                     className="flex h-full w-[340px] flex-shrink-0 flex-col border-r border-white/10"
                                 >
-                                    <div className="relative border-b border-white/10 bg-[#101010]">
+                                    <div className="relative border-b border-white/10 bg-[#171717]">
                                         <div
                                             className="h-1"
                                             style={{ backgroundColor: stage.color || DEFAULT_STAGE_COLOR }}
@@ -422,7 +444,7 @@ function StageAutomationSettingsBoard({
                                                 variant="ghost"
                                                 size="icon"
                                                 onClick={() => onAddTrigger(stage)}
-                                                className="h-9 w-9 rounded-full border border-sky-100/30 bg-[#101010] text-[#3cc788] hover:bg-sky-400/20 hover:text-green-500 border-[#3cc788] transition-colors focus-visible:ring-2 focus-visible:ring-green-500"
+                                                className="h-9 w-9 rounded-full border border-sky-100/30 bg-[#171717] text-[#3cc788] hover:bg-sky-400/20 hover:text-green-500 border-[#3cc788] transition-colors focus-visible:ring-2 focus-visible:ring-green-500"
                                             >
                                                 <Plus className="h-5 w-5" />
                                             </Button>
@@ -454,35 +476,49 @@ function StageAutomationSettingsBoard({
                                             stageTriggers.map((trigger) => (
                                                 <div
                                                     key={trigger.id}
-                                                    className="rounded-md border border-white/10 bg-[#101010] p-3 shadow-sm"
+                                                    className="rounded-md border border-white/10 bg-[#171717] p-3 shadow-sm"
                                                 >
                                                     <div className="flex items-start gap-3">
                                                         <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-teal-300/50  text-[#3cc788]">
-                                                            <ClipboardCheck className="h-4 w-4" />
+                                                            {trigger.action_type === "change_responsible" ? (
+                                                                <Users className="h-4 w-4" />
+                                                            ) : (
+                                                                <ClipboardCheck className="h-4 w-4" />
+                                                            )}
                                                         </div>
                                                         <div className="min-w-0 flex-1">
                                                             <p className="text-xs text-sky-100/70">
-                                                                Etapga o&apos;tganda
+                                                                {getActionTypeLabel(trigger.action_type)}
                                                             </p>
                                                             <p className="mt-0.5 line-clamp-2 text-sm font-semibold leading-5">
                                                                 {trigger.name}
                                                             </p>
                                                             <p className="mt-1 line-clamp-2 text-xs text-sky-100/70">
-                                                                {trigger.task_text}
+                                                                {trigger.action_type === "change_responsible"
+                                                                    ? `${getEmployeeName(trigger.target_employee_id, employees)} ga biriktiriladi`
+                                                                    : trigger.task_text}
                                                             </p>
                                                         </div>
                                                     </div>
                                                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-sky-100/70">
-                                                        <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-1">
-                                                            <Clock3 className="mr-1 h-3 w-3" />
-                                                            {formatDelayMinutes(trigger.delay_minutes)}
-                                                        </span>
-                                                        <span className="rounded-full bg-white/10 px-2 py-1">
-                                                            {getTaskTypeLabel(trigger.task_type)}
-                                                        </span>
-                                                        <span className="rounded-full bg-white/10 px-2 py-1">
-                                                            {getAssigneeModeLabel(trigger.assignee_mode)}
-                                                        </span>
+                                                        {trigger.action_type === "create_task" ? (
+                                                            <>
+                                                                <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-1">
+                                                                    <Clock3 className="mr-1 h-3 w-3" />
+                                                                    {formatDelayMinutes(trigger.delay_minutes)}
+                                                                </span>
+                                                                <span className="rounded-full bg-white/10 px-2 py-1">
+                                                                    {getTaskTypeLabel(trigger.task_type)}
+                                                                </span>
+                                                                <span className="rounded-full bg-white/10 px-2 py-1">
+                                                                    {getAssigneeModeLabel(trigger.assignee_mode)}
+                                                                </span>
+                                                            </>
+                                                        ) : (
+                                                            <span className="rounded-full bg-white/10 px-2 py-1">
+                                                                {getEmployeeName(trigger.target_employee_id, employees)}
+                                                            </span>
+                                                        )}
                                                         {!trigger.enabled && (
                                                             <span className="rounded-full bg-red-400/15 px-2 py-1 text-red-100">
                                                                 O&apos;chiq
@@ -802,13 +838,15 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const [newStageColor, setNewStageColor] = useState(DEFAULT_STAGE_COLOR);
     const [editingStage, setEditingStage] = useState<Stage | null>(null);
     const [triggerStage, setTriggerStage] = useState<Stage | null>(null);
+    const [stageTriggerActionType, setStageTriggerActionType] = useState<StageAutomationActionType>("create_task");
     const [stageTriggerName, setStageTriggerName] = useState(DEFAULT_STAGE_TRIGGER_NAME);
     const [stageTriggerText, setStageTriggerText] = useState(DEFAULT_STAGE_TRIGGER_TEXT);
     const [stageTriggerDelayMinutes, setStageTriggerDelayMinutes] = useState("0");
     const [stageTriggerTaskType, setStageTriggerTaskType] = useState<StageAutomationTaskType>("qayta_aloqa");
     const [stageTriggerAssigneeMode, setStageTriggerAssigneeMode] = useState<StageAutomationAssigneeMode>("lead_employee");
+    const [stageTriggerTargetEmployeeId, setStageTriggerTargetEmployeeId] = useState("");
     const [stageTriggerEnabled, setStageTriggerEnabled] = useState(true);
-    const [stageTriggerErrors, setStageTriggerErrors] = useState<{ name?: string; text?: string; delay?: string }>({});
+    const [stageTriggerErrors, setStageTriggerErrors] = useState<{ name?: string; text?: string; delay?: string; targetEmployee?: string }>({});
     const [creatingLeadStage, setCreatingLeadStage] = useState<Stage | null>(null);
     const [newLeadName, setNewLeadName] = useState("");
     const [newLeadPhone, setNewLeadPhone] = useState(UZBEK_PHONE_PREFIX);
@@ -841,6 +879,9 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     } | null>(null);
 
     const isAdmin = employee?.role === "super-admin";
+    const { data: triggerEmployees = [], isLoading: triggerEmployeesLoading } = useBranchEmployees(
+        isAdmin ? pipeline?.branch_id : null
+    );
     // For regular users, filter leads by their employee_id
     const employeeId = isAdmin ? null : employee?.id;
     const leadEmployeeId = employee?.id;
@@ -1180,24 +1221,43 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
     const resetStageTriggerDialog = () => {
         setTriggerStage(null);
+        setStageTriggerActionType("create_task");
         setStageTriggerName(DEFAULT_STAGE_TRIGGER_NAME);
         setStageTriggerText(DEFAULT_STAGE_TRIGGER_TEXT);
         setStageTriggerDelayMinutes("0");
         setStageTriggerTaskType("qayta_aloqa");
         setStageTriggerAssigneeMode("lead_employee");
+        setStageTriggerTargetEmployeeId("");
         setStageTriggerEnabled(true);
         setStageTriggerErrors({});
     };
 
     const handleOpenAddTrigger = (stage: Stage) => {
         setTriggerStage(stage);
+        setStageTriggerActionType("create_task");
         setStageTriggerName(DEFAULT_STAGE_TRIGGER_NAME);
         setStageTriggerText(DEFAULT_STAGE_TRIGGER_TEXT);
         setStageTriggerDelayMinutes("0");
         setStageTriggerTaskType("qayta_aloqa");
         setStageTriggerAssigneeMode("lead_employee");
+        setStageTriggerTargetEmployeeId("");
         setStageTriggerEnabled(true);
         setStageTriggerErrors({});
+    };
+
+    const handleStageTriggerActionChange = (actionType: StageAutomationActionType) => {
+        setStageTriggerActionType(actionType);
+        setStageTriggerErrors({});
+
+        if (actionType === "change_responsible") {
+            setStageTriggerName(DEFAULT_RESPONSIBLE_TRIGGER_NAME);
+            setStageTriggerText("");
+            setStageTriggerDelayMinutes("0");
+            return;
+        }
+
+        setStageTriggerName(DEFAULT_STAGE_TRIGGER_NAME);
+        setStageTriggerText(DEFAULT_STAGE_TRIGGER_TEXT);
     };
 
     const handleCreateStageTrigger = async () => {
@@ -1206,18 +1266,22 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         const trimmedName = stageTriggerName.trim();
         const trimmedText = stageTriggerText.trim();
         const delayMinutes = Number(stageTriggerDelayMinutes);
-        const errors: { name?: string; text?: string; delay?: string } = {};
+        const errors: { name?: string; text?: string; delay?: string; targetEmployee?: string } = {};
 
         if (!trimmedName) {
             errors.name = "Trigger nomini kiriting";
         }
 
-        if (!trimmedText) {
+        if (stageTriggerActionType === "create_task" && !trimmedText) {
             errors.text = "Zadacha matnini kiriting";
         }
 
-        if (!Number.isInteger(delayMinutes) || delayMinutes < 0) {
+        if (stageTriggerActionType === "create_task" && (!Number.isInteger(delayMinutes) || delayMinutes < 0)) {
             errors.delay = "Kechikish 0 yoki undan katta butun son bo'lishi kerak";
+        }
+
+        if (stageTriggerActionType === "change_responsible" && !stageTriggerTargetEmployeeId) {
+            errors.targetEmployee = "Mas'ul xodimni tanlang";
         }
 
         if (Object.keys(errors).length > 0) {
@@ -1229,11 +1293,13 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
             await createStageAutomationTriggerMutation.mutateAsync({
                 pipeline_id: pipelineId,
                 stage_id: triggerStage.id,
+                action_type: stageTriggerActionType,
                 name: trimmedName,
-                delay_minutes: delayMinutes,
-                task_text: trimmedText,
+                delay_minutes: stageTriggerActionType === "create_task" ? delayMinutes : 0,
+                task_text: stageTriggerActionType === "create_task" ? trimmedText : null,
                 task_type: stageTriggerTaskType,
                 assignee_mode: stageTriggerAssigneeMode,
+                target_employee_id: stageTriggerActionType === "change_responsible" ? stageTriggerTargetEmployeeId : null,
                 enabled: stageTriggerEnabled,
             });
 
@@ -1373,7 +1439,8 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     pipelineName={pipeline?.name}
                     stages={stages}
                     triggers={pipelineAutomationTriggers}
-                    isLoading={stagesLoading || pipelineAutomationTriggersLoading}
+                    employees={triggerEmployees}
+                    isLoading={stagesLoading || pipelineAutomationTriggersLoading || triggerEmployeesLoading}
                     onBack={() => setIsAutomationSettingsOpen(false)}
                     onSave={() => setIsAutomationSettingsOpen(false)}
                     onAddTrigger={handleOpenAddTrigger}
@@ -1610,7 +1677,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     if (!open) resetStageTriggerDialog();
                 }}
             >
-                <DialogContent className="bg-card border-border">
+                <DialogContent className="bg-card border-border sm:max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>
                             Trigger qo&apos;shish{triggerStage ? `: ${triggerStage.name}` : ""}
@@ -1618,6 +1685,28 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                         <DialogDescription className="hidden" />
                     </DialogHeader>
                     <div className="space-y-4 py-4">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            {STAGE_TRIGGER_ACTION_TYPES.map((action) => {
+                                const Icon = action.icon;
+                                const isSelected = stageTriggerActionType === action.value;
+
+                                return (
+                                    <button
+                                        key={action.value}
+                                        type="button"
+                                        onClick={() => handleStageTriggerActionChange(action.value)}
+                                        className={`rounded-md border p-4 text-left transition-colors ${isSelected
+                                            ? "border-primary bg-primary/10 text-foreground"
+                                            : "border-border bg-background hover:border-primary/40 hover:bg-accent/60"
+                                            }`}
+                                    >
+                                        <Icon className={`mb-3 h-7 w-7 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
+                                        <span className="text-sm font-medium">{action.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
                         <div className="space-y-2">
                             <label className="text-sm font-medium">
                                 Trigger nomi <span className="text-destructive">*</span>
@@ -1634,79 +1723,113 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                             )}
                         </div>
 
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">
-                                Zadacha matni <span className="text-destructive">*</span>
-                            </label>
-                            <Textarea
-                                value={stageTriggerText}
-                                onChange={(e) => {
-                                    setStageTriggerText(e.target.value);
-                                    setStageTriggerErrors((prev) => (prev.text ? { ...prev, text: undefined } : prev));
-                                }}
-                                className="min-h-24"
-                            />
-                            {stageTriggerErrors.text && (
-                                <p className="text-sm text-destructive">{stageTriggerErrors.text}</p>
-                            )}
-                        </div>
+                        {stageTriggerActionType === "create_task" ? (
+                            <>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">
+                                        Zadacha matni <span className="text-destructive">*</span>
+                                    </label>
+                                    <Textarea
+                                        value={stageTriggerText}
+                                        onChange={(e) => {
+                                            setStageTriggerText(e.target.value);
+                                            setStageTriggerErrors((prev) => (prev.text ? { ...prev, text: undefined } : prev));
+                                        }}
+                                        className="min-h-24"
+                                    />
+                                    {stageTriggerErrors.text && (
+                                        <p className="text-sm text-destructive">{stageTriggerErrors.text}</p>
+                                    )}
+                                </div>
 
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">Kechikish (daqiqa)</label>
-                                <Input
-                                    type="number"
-                                    min={0}
-                                    step={1}
-                                    value={stageTriggerDelayMinutes}
-                                    onChange={(e) => {
-                                        setStageTriggerDelayMinutes(e.target.value);
-                                        setStageTriggerErrors((prev) => (prev.delay ? { ...prev, delay: undefined } : prev));
-                                    }}
-                                />
-                                {stageTriggerErrors.delay && (
-                                    <p className="text-sm text-destructive">{stageTriggerErrors.delay}</p>
-                                )}
-                            </div>
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">Kechikish (daqiqa)</label>
+                                        <Input
+                                            type="number"
+                                            min={0}
+                                            step={1}
+                                            value={stageTriggerDelayMinutes}
+                                            onChange={(e) => {
+                                                setStageTriggerDelayMinutes(e.target.value);
+                                                setStageTriggerErrors((prev) => (prev.delay ? { ...prev, delay: undefined } : prev));
+                                            }}
+                                        />
+                                        {stageTriggerErrors.delay && (
+                                            <p className="text-sm text-destructive">{stageTriggerErrors.delay}</p>
+                                        )}
+                                    </div>
 
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">Zadacha turi</label>
+                                        <Select
+                                            value={stageTriggerTaskType}
+                                            onValueChange={(value) => setStageTriggerTaskType(value as StageAutomationTaskType)}
+                                        >
+                                            <SelectTrigger className="w-full">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {STAGE_TRIGGER_TASK_TYPES.map((type) => (
+                                                    <SelectItem key={type.value} value={type.value}>
+                                                        {type.label}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Biriktirish</label>
+                                    <Select
+                                        value={stageTriggerAssigneeMode}
+                                        onValueChange={(value) => setStageTriggerAssigneeMode(value as StageAutomationAssigneeMode)}
+                                    >
+                                        <SelectTrigger className="w-full">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {STAGE_TRIGGER_ASSIGNEE_MODES.map((mode) => (
+                                                <SelectItem key={mode.value} value={mode.value}>
+                                                    {mode.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </>
+                        ) : (
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">Zadacha turi</label>
+                                <label className="text-sm font-medium">
+                                    Yangi mas&apos;ul <span className="text-destructive">*</span>
+                                </label>
                                 <Select
-                                    value={stageTriggerTaskType}
-                                    onValueChange={(value) => setStageTriggerTaskType(value as StageAutomationTaskType)}
+                                    value={stageTriggerTargetEmployeeId || undefined}
+                                    onValueChange={(value) => {
+                                        setStageTriggerTargetEmployeeId(value);
+                                        setStageTriggerErrors((prev) => (
+                                            prev.targetEmployee ? { ...prev, targetEmployee: undefined } : prev
+                                        ));
+                                    }}
+                                    disabled={triggerEmployeesLoading}
                                 >
                                     <SelectTrigger className="w-full">
-                                        <SelectValue />
+                                        <SelectValue placeholder={triggerEmployeesLoading ? "Yuklanmoqda..." : "Xodim tanlang"} />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {STAGE_TRIGGER_TASK_TYPES.map((type) => (
-                                            <SelectItem key={type.value} value={type.value}>
-                                                {type.label}
+                                        {triggerEmployees.map((emp) => (
+                                            <SelectItem key={emp.id} value={String(emp.id)}>
+                                                {emp.name}
                                             </SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
+                                {stageTriggerErrors.targetEmployee && (
+                                    <p className="text-sm text-destructive">{stageTriggerErrors.targetEmployee}</p>
+                                )}
                             </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">Biriktirish</label>
-                            <Select
-                                value={stageTriggerAssigneeMode}
-                                onValueChange={(value) => setStageTriggerAssigneeMode(value as StageAutomationAssigneeMode)}
-                            >
-                                <SelectTrigger className="w-full">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {STAGE_TRIGGER_ASSIGNEE_MODES.map((mode) => (
-                                        <SelectItem key={mode.value} value={mode.value}>
-                                            {mode.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        )}
 
                         <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
                             <label className="text-sm font-medium">Faol</label>
@@ -1722,7 +1845,8 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                             disabled={
                                 createStageAutomationTriggerMutation.isPending
                                 || !stageTriggerName.trim()
-                                || !stageTriggerText.trim()
+                                || (stageTriggerActionType === "create_task" && !stageTriggerText.trim())
+                                || (stageTriggerActionType === "change_responsible" && !stageTriggerTargetEmployeeId)
                             }
                             className="btn-primary"
                         >

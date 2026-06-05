@@ -2,6 +2,8 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { taskKeys } from "@/hooks/use-tasks";
+import { leadTimelineKeys } from "@/hooks/use-lead-timeline";
 
 // Pipeline type
 export interface Pipeline {
@@ -485,6 +487,11 @@ export function useUpdateLead() {
                 queryClient.invalidateQueries({ queryKey: leadKeys.byPipeline(data.pipeline_id) });
             }
             queryClient.invalidateQueries({ queryKey: stageLeadKeys.base });
+            if (data?.id) {
+                queryClient.invalidateQueries({ queryKey: taskKeys.all });
+                queryClient.invalidateQueries({ queryKey: taskKeys.byLead(data.id) });
+                queryClient.invalidateQueries({ queryKey: leadTimelineKeys.byLead(data.id) });
+            }
         },
     });
 }
@@ -601,6 +608,11 @@ export function useMoveLead() {
             if (data?.pipelineId) {
                 queryClient.invalidateQueries({ queryKey: leadKeys.byPipeline(data.pipelineId) });
                 queryClient.invalidateQueries({ queryKey: stageLeadKeys.base });
+            }
+            if (data?.id) {
+                queryClient.invalidateQueries({ queryKey: taskKeys.all });
+                queryClient.invalidateQueries({ queryKey: taskKeys.byLead(data.id) });
+                queryClient.invalidateQueries({ queryKey: leadTimelineKeys.byLead(data.id) });
             }
         },
     });

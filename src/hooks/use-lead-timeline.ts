@@ -71,6 +71,8 @@ export function useLeadTimelineEvents(leadId?: string | null) {
             return (data || []) as LeadTimelineEvent[];
         },
         enabled: !!leadId,
+        staleTime: 0,
+        refetchOnMount: "always",
     });
 }
 

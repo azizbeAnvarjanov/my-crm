@@ -215,6 +215,8 @@ export function useTasksByLead(leadId: string) {
             return data as Task[];
         },
         enabled: !!leadId,
+        staleTime: 0,
+        refetchOnMount: "always",
     });
 }
 

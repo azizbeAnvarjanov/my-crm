@@ -3,6 +3,7 @@
 import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { use } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
     DndContext,
     DragOverlay,
@@ -82,10 +83,12 @@ import {
     useDeleteStage,
     useMoveLead,
     useUpdateLead,
+    leadKeys,
+    stageLeadKeys,
     Stage,
     Lead,
 } from "@/hooks/use-pipeline";
-import { useBranchEmployees } from "@/hooks/use-tasks";
+import { taskKeys, useBranchEmployees } from "@/hooks/use-tasks";
 import {
     useCreateStageAutomationTrigger,
     usePipelineStageAutomationTriggers,
@@ -94,7 +97,8 @@ import {
     type StageAutomationAssigneeMode,
     type StageAutomationTaskType,
 } from "@/hooks/use-stage-automation";
-import { LeadSheet } from "@/components/lead-sheet";
+import { LeadSheet, type LeadMergeInput } from "@/components/lead-sheet";
+import { createClient } from "@/lib/supabase/client";
 
 const DEFAULT_STAGE_COLOR = "#6366f1";
 const STAGE_COLORS = [
@@ -557,6 +561,7 @@ function StageColumn({
     dragOverLeadId,
     dragOverPlacement,
     onTotalCountChange,
+    onVisibleLeadsChange,
 }: {
     stage: Stage;
     pipelineId: string;
@@ -574,6 +579,7 @@ function StageColumn({
     dragOverLeadId: string | null;
     dragOverPlacement: DropPlacement | null;
     onTotalCountChange?: (stageId: string, totalCount: number) => void;
+    onVisibleLeadsChange?: (stageId: string, leads: Lead[]) => void;
 }) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [scrollProgress, setScrollProgress] = useState(0);
@@ -588,13 +594,21 @@ function StageColumn({
     const loadMoreMutation = useLoadMoreStageLeads();
 
     // Track loaded leads for this stage
-    const leads = stageData?.leads || [];
+    const leads = useMemo(() => stageData?.leads ?? [], [stageData?.leads]);
     const hasMore = stageData?.hasMore || false;
     const totalCount = stageData?.totalCount || 0;
 
     useEffect(() => {
         onTotalCountChange?.(stage.id, totalCount);
     }, [onTotalCountChange, stage.id, totalCount]);
+
+    useEffect(() => {
+        onVisibleLeadsChange?.(stage.id, leads);
+
+        return () => {
+            onVisibleLeadsChange?.(stage.id, []);
+        };
+    }, [leads, onVisibleLeadsChange, stage.id]);
 
     const handleLoadMore = useCallback(() => {
         if (!hasMore || loadMoreMutation.isPending) return;
@@ -807,6 +821,7 @@ function StageColumn({
 export default function LeadsPage({ params }: { params: Promise<{ pipelineId: string }> }) {
     const { pipelineId } = use(params);
     const router = useRouter();
+    const queryClient = useQueryClient();
 
     const { data: employee, isLoading: employeeLoading, error: employeeError } = useEmployee();
     const { data: pipeline, isLoading: pipelineLoading, error: pipelineError } = usePipeline(pipelineId);
@@ -853,7 +868,9 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const [newLeadErrors, setNewLeadErrors] = useState<{ name?: string; phone?: string }>({});
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
     const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
+    const [isMergingLeads, setIsMergingLeads] = useState(false);
     const [stageLeadCounts, setStageLeadCounts] = useState<Record<string, number>>({});
+    const [visibleLeadsByStage, setVisibleLeadsByStage] = useState<Record<string, Lead[]>>({});
     const [horizontalScrollState, setHorizontalScrollState] = useState({
         scrollLeft: 0,
         clientWidth: 0,
@@ -930,6 +947,19 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
         return stages.map((stage) => stage.id);
     }, [stages]);
+    const visibleMergeCandidates = useMemo(() => {
+        const leadsById = new Map<string, Lead>();
+
+        Object.values(visibleLeadsByStage).forEach((leads) => {
+            leads.forEach((lead) => {
+                if (lead.id) {
+                    leadsById.set(lead.id, lead);
+                }
+            });
+        });
+
+        return Array.from(leadsById.values());
+    }, [visibleLeadsByStage]);
 
     const movingLeadId = moveLeadMutation.isPending ? moveLeadMutation.variables?.leadId || null : null;
 
@@ -990,6 +1020,24 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         setStageLeadCounts((prev) => (
             prev[stageId] === totalCount ? prev : { ...prev, [stageId]: totalCount }
         ));
+    }, []);
+
+    const handleVisibleLeadsChange = useCallback((stageId: string, leads: Lead[]) => {
+        setVisibleLeadsByStage((prev) => {
+            const previousLeads = prev[stageId] || [];
+            const hasSameLeads = previousLeads.length === leads.length
+                && previousLeads.every((previousLead, index) => previousLead === leads[index]);
+
+            if (hasSameLeads) return prev;
+
+            if (leads.length === 0) {
+                const next = { ...prev };
+                delete next[stageId];
+                return next;
+            }
+
+            return { ...prev, [stageId]: leads };
+        });
     }, []);
 
     const resetCreateLeadDialog = useCallback(() => {
@@ -1410,6 +1458,97 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         }
     };
 
+    const handleMergeLeads = async ({
+        primaryLead,
+        secondaryLead,
+        primaryUpdates,
+    }: LeadMergeInput) => {
+        setIsMergingLeads(true);
+
+        try {
+            if (Object.keys(primaryUpdates).length > 0) {
+                await updateLeadMutation.mutateAsync({ id: primaryLead.id, ...primaryUpdates });
+            }
+
+            const supabase = createClient();
+            const { error: moveTasksError } = await supabase
+                .from("tasks")
+                .update({ lead_id: primaryLead.id })
+                .eq("lead_id", secondaryLead.id);
+
+            if (moveTasksError) {
+                throw moveTasksError;
+            }
+
+            const { error: deleteLeadError } = await supabase
+                .from("leads")
+                .delete()
+                .eq("id", secondaryLead.id)
+                .select("id")
+                .single();
+
+            if (deleteLeadError) {
+                throw deleteLeadError;
+            }
+
+            setSelectedLead((prev) => {
+                if (!prev || prev.id !== primaryLead.id) return prev;
+
+                const nextLead = { ...prev, ...primaryUpdates };
+                if (primaryUpdates.employee_id && secondaryLead.employee) {
+                    nextLead.employee = secondaryLead.employee;
+                }
+
+                return nextLead;
+            });
+
+            setVisibleLeadsByStage((prev) => {
+                const next: Record<string, Lead[]> = {};
+
+                Object.entries(prev).forEach(([stageId, leads]) => {
+                    const nextLeads = leads
+                        .filter((lead) => lead.id !== secondaryLead.id)
+                        .map((lead) => {
+                            if (lead.id !== primaryLead.id) return lead;
+
+                            const nextLead = { ...lead, ...primaryUpdates };
+                            if (primaryUpdates.employee_id && secondaryLead.employee) {
+                                nextLead.employee = secondaryLead.employee;
+                            }
+
+                            return nextLead;
+                        });
+
+                    if (nextLeads.length > 0) {
+                        next[stageId] = nextLeads;
+                    }
+                });
+
+                return next;
+            });
+
+            setStageLeadCounts((prev) => {
+                const currentCount = prev[secondaryLead.stage_id];
+
+                if (currentCount === undefined) return prev;
+
+                return {
+                    ...prev,
+                    [secondaryLead.stage_id]: Math.max(0, currentCount - 1),
+                };
+            });
+
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: leadKeys.byPipeline(primaryLead.pipeline_id) }),
+                queryClient.invalidateQueries({ queryKey: stageLeadKeys.base }),
+                queryClient.invalidateQueries({ queryKey: taskKeys.byLead(primaryLead.id) }),
+                queryClient.invalidateQueries({ queryKey: taskKeys.byLead(secondaryLead.id) }),
+            ]);
+        } finally {
+            setIsMergingLeads(false);
+        }
+    };
+
     // Loading state
     if (employeeLoading || pipelineLoading) {
         return (
@@ -1564,6 +1703,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                                     dragOverLeadId={dragOverLeadId}
                                     dragOverPlacement={dragOverPlacement}
                                     onTotalCountChange={handleStageTotalCountChange}
+                                    onVisibleLeadsChange={handleVisibleLeadsChange}
                                 />
                             ))}
                         </div>
@@ -2005,7 +2145,10 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     onClose={handleCloseLeadSheet}
                     stages={stages}
                     onUpdateLead={handleUpdateLead}
+                    mergeCandidates={visibleMergeCandidates}
+                    onMergeLeads={handleMergeLeads}
                     isUpdating={updateLeadMutation.isPending}
+                    isMerging={isMergingLeads}
                 />
             )}
         </div>

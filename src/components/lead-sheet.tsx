@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react"
-import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle, History, MessageSquare, GitBranch, UserCog, ListChecks, CheckCircle2, RotateCcw, FileText, type LucideIcon } from "lucide-react";
+import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle, History, MessageSquare, GitBranch, UserCog, ListChecks, CheckCircle2, RotateCcw, FileText, GitMerge, Search, type LucideIcon } from "lucide-react";
 import {
     Sheet,
     SheetContent,
@@ -52,11 +52,20 @@ interface LeadSheetProps {
     onClose: () => void;
     stages: Stage[];
     onUpdateLead: (leadId: string, updates: Partial<Lead>) => Promise<void>;
+    mergeCandidates?: Lead[];
+    onMergeLeads?: (input: LeadMergeInput) => Promise<void>;
     isUpdating?: boolean;
+    isMerging?: boolean;
 }
 
 type LeadUpdate = Partial<Omit<Lead, "date_of_year">> & {
     date_of_year?: string | null;
+};
+
+export type LeadMergeInput = {
+    primaryLead: Lead;
+    secondaryLead: Lead;
+    primaryUpdates: Partial<Lead>;
 };
 
 type TimelineComposerMode = "note" | "task";
@@ -317,13 +326,96 @@ function getTodayDateValue(): string {
     return new Date().toISOString().split("T")[0];
 }
 
+type FillableLeadField = "name" | "location" | "age" | "gender" | "date_of_year" | "utm" | "employee_id" | "status";
+
+const FILLABLE_LEAD_FIELDS: FillableLeadField[] = [
+    "name",
+    "location",
+    "age",
+    "gender",
+    "date_of_year",
+    "utm",
+    "employee_id",
+    "status",
+];
+
+function isMissingLeadValue(value: unknown): boolean {
+    return value === null || value === undefined || (typeof value === "string" && value.trim() === "");
+}
+
+function normalizeComparablePhone(value?: string | null): string {
+    const digits = String(value ?? "").replace(/\D/g, "");
+    const withoutCountryCode = digits.startsWith("998") ? digits.slice(3) : digits;
+
+    return withoutCountryCode.slice(-UZ_PHONE_LOCAL_LENGTH);
+}
+
+function isSamePhone(left?: string | null, right?: string | null): boolean {
+    const leftPhone = normalizeComparablePhone(left);
+    const rightPhone = normalizeComparablePhone(right);
+
+    return Boolean(leftPhone && rightPhone && leftPhone === rightPhone);
+}
+
+function assignLeadUpdate(updates: Partial<Lead>, field: keyof Lead, value: unknown) {
+    (updates as Record<string, unknown>)[field] = value;
+}
+
+function addMissingFieldUpdates(target: Lead, source: Lead, updates: Partial<Lead>) {
+    FILLABLE_LEAD_FIELDS.forEach((field) => {
+        const targetValue = target[field];
+        const sourceValue = source[field];
+
+        if (isMissingLeadValue(targetValue) && !isMissingLeadValue(sourceValue)) {
+            assignLeadUpdate(updates, field, sourceValue);
+        }
+    });
+}
+
+function getPhoneMergeUpdates(target: Lead, source: Lead): Partial<Lead> {
+    const updates: Partial<Lead> = {};
+    const sourcePhones = [source.phone, source.phone_2].filter((phone) => !isMissingLeadValue(phone));
+
+    if (isMissingLeadValue(target.phone)) {
+        const nextPhone = sourcePhones[0];
+        if (nextPhone) {
+            updates.phone = nextPhone;
+        }
+    }
+
+    const primaryPhone = updates.phone || target.phone;
+    if (isMissingLeadValue(target.phone_2)) {
+        const nextSecondaryPhone = sourcePhones.find((phone) => !isSamePhone(phone, primaryPhone));
+        if (nextSecondaryPhone) {
+            updates.phone_2 = nextSecondaryPhone;
+        }
+    }
+
+    return updates;
+}
+
+function getLeadMergeUpdates(primaryLead: Lead, secondaryLead: Lead) {
+    const primaryUpdates = getPhoneMergeUpdates(primaryLead, secondaryLead);
+
+    addMissingFieldUpdates(primaryLead, secondaryLead, primaryUpdates);
+
+    return primaryUpdates;
+}
+
+function getMergeLeadLabel(lead: Lead) {
+    return lead.name || lead.phone || `#${lead.id}`;
+}
+
 export function LeadSheet({
     lead,
     isOpen,
     onClose,
     stages,
     onUpdateLead,
+    mergeCandidates = [],
+    onMergeLeads,
     isUpdating = false,
+    isMerging = false,
 }: LeadSheetProps) {
     const [editedLead, setEditedLead] = useState<Partial<Lead>>({});
     const [hasChanges, setHasChanges] = useState(false);
@@ -345,6 +437,10 @@ export function LeadSheet({
     const [timelineTaskType, setTimelineTaskType] = useState<TaskType>("qayta_aloqa");
     const [timelineTaskDate, setTimelineTaskDate] = useState(getTodayDateValue());
     const [timelineTaskTime, setTimelineTaskTime] = useState("");
+    const [isMergeDialogOpen, setIsMergeDialogOpen] = useState(false);
+    const [mergeSearch, setMergeSearch] = useState("");
+    const [selectedMergeLeadId, setSelectedMergeLeadId] = useState("");
+    const [mergeError, setMergeError] = useState("");
 
     const { data: employee } = useEmployee();
     const { data: tasks = [], isLoading: tasksLoading } = useTasksByLead(lead?.id || "");
@@ -384,6 +480,34 @@ export function LeadSheet({
             .filter((item) => item.occurredAt)
             .sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
     }, [calls, timelineEvents]);
+    const availableMergeCandidates = useMemo(() => {
+        const seen = new Set<string>();
+
+        return mergeCandidates.filter((candidate) => {
+            if (!candidate.id || candidate.id === lead?.id || seen.has(candidate.id)) return false;
+
+            seen.add(candidate.id);
+            return true;
+        });
+    }, [lead?.id, mergeCandidates]);
+    const filteredMergeCandidates = useMemo(() => {
+        const search = mergeSearch.trim().toLowerCase();
+
+        if (!search) return availableMergeCandidates;
+
+        return availableMergeCandidates.filter((candidate) => (
+            candidate.name?.toLowerCase().includes(search)
+            || candidate.phone?.toLowerCase().includes(search)
+            || candidate.phone_2?.toLowerCase().includes(search)
+            || candidate.location?.toLowerCase().includes(search)
+        ));
+    }, [availableMergeCandidates, mergeSearch]);
+    const selectedMergeLead = useMemo(
+        () => availableMergeCandidates.find((candidate) => candidate.id === selectedMergeLeadId) || null,
+        [availableMergeCandidates, selectedMergeLeadId]
+    );
+    const isMergeSubmitting = isMerging || createTimelineNoteMutation.isPending;
+    const canOpenMergeDialog = Boolean(onMergeLeads && availableMergeCandidates.length > 0 && !hasChanges && !isUpdating && !isMergeSubmitting);
 
     useEffect(() => {
         if (lead) {
@@ -404,6 +528,10 @@ export function LeadSheet({
             setTimelineTaskType("qayta_aloqa");
             setTimelineTaskDate(getTodayDateValue());
             setTimelineTaskTime("");
+            setIsMergeDialogOpen(false);
+            setMergeSearch("");
+            setSelectedMergeLeadId("");
+            setMergeError("");
         }
     }, [lead]);
 
@@ -622,6 +750,63 @@ export function LeadSheet({
         }
     };
 
+    const handleOpenMergeDialog = () => {
+        if (!canOpenMergeDialog) {
+            if (hasChanges) {
+                setMergeError("Avval lead o'zgarishlarini saqlang.");
+            }
+            return;
+        }
+
+        setMergeError("");
+        setSelectedMergeLeadId("");
+        setMergeSearch("");
+        setIsMergeDialogOpen(true);
+    };
+
+    const handleMergeLeads = async () => {
+        if (!lead || !selectedMergeLead || !onMergeLeads) return;
+
+        const primaryUpdates = getLeadMergeUpdates(lead, selectedMergeLead);
+
+        try {
+            await onMergeLeads({
+                primaryLead: lead,
+                secondaryLead: selectedMergeLead,
+                primaryUpdates,
+            });
+
+            try {
+                await createTimelineNoteMutation.mutateAsync({
+                    lead_id: lead.id,
+                    pipeline_id: lead.pipeline_id,
+                    stage_id: primaryUpdates.stage_id || lead.stage_id,
+                    employee_id: primaryUpdates.employee_id || lead.employee_id || null,
+                    actor_employee_id: employee?.id || null,
+                    body: `${getMergeLeadLabel(selectedMergeLead)} lidi shu lidga birlashtirildi. Duplicate lid o'chirildi.`,
+                });
+            } catch (timelineError) {
+                console.error("Error writing merge timeline note:", timelineError);
+            }
+
+            setEditedLead((prev) => ({
+                ...prev,
+                ...primaryUpdates,
+                phone: primaryUpdates.phone ? formatUzPhone(primaryUpdates.phone) : prev.phone,
+                phone_2: primaryUpdates.phone_2 ? formatOptionalUzPhone(primaryUpdates.phone_2) : prev.phone_2,
+                date_of_year: primaryUpdates.date_of_year || prev.date_of_year,
+            }));
+            setHasChanges(false);
+            setIsMergeDialogOpen(false);
+            setSelectedMergeLeadId("");
+            setMergeSearch("");
+            setMergeError("");
+        } catch (error) {
+            console.error("Error merging leads:", error);
+            setMergeError("Leadlarni birlashtirib bo'lmadi. Qayta urinib ko'ring.");
+        }
+    };
+
     const handleAddTimelineEntry = async () => {
         if (!lead || !timelineNote.trim()) return;
 
@@ -726,13 +911,31 @@ export function LeadSheet({
                                     <span>{lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("uz-UZ") : "-"}</span>
                                 </div>
 
-                           {lead.employee && (
+                                {lead.employee && (
                                     <div className="flex justify-between">
                                         <span>Mas&apos;ul xodim:</span>
                                         <span>{lead.employee.name}</span>
                                     </div>
                                 )}
                             </div>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleOpenMergeDialog}
+                                disabled={!canOpenMergeDialog || isMergeSubmitting}
+                                className="w-full justify-start"
+                                title={hasChanges ? "Avval o'zgarishlarni saqlang" : undefined}
+                            >
+                                {isMergeSubmitting ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                    <GitMerge className="mr-2 h-4 w-4" />
+                                )}
+                                Boshqa lid bilan birlashtirish
+                            </Button>
+                            {mergeError && !isMergeDialogOpen && (
+                                <p className="text-xs text-destructive">{mergeError}</p>
+                            )}
                             </div>
                         </SheetHeader>
 
@@ -1450,6 +1653,122 @@ export function LeadSheet({
                         </Tabs>
                     </div>
                 </div>
+
+                {/* Lead Merge Dialog */}
+                <Dialog
+                    open={isMergeDialogOpen}
+                    onOpenChange={(open) => {
+                        setIsMergeDialogOpen(open);
+                        if (!open) {
+                            setSelectedMergeLeadId("");
+                            setMergeSearch("");
+                            setMergeError("");
+                        }
+                    }}
+                >
+                    <DialogContent className="bg-card border-border sm:max-w-2xl">
+                        <DialogHeader>
+                            <DialogTitle>Lidlarni birlashtirish</DialogTitle>
+                            <DialogDescription>
+                                Ochiq lid va tanlangan lid bir-biridagi bo&apos;sh ma&apos;lumotlarni to&apos;ldiradi.
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        <div className="space-y-4 py-2">
+                            <div className="rounded-md border border-border bg-background p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Asosiy lid
+                                </p>
+                                <div className="mt-2 flex items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="truncate text-sm font-medium">{lead.name || "-"}</p>
+                                        <p className="text-xs text-muted-foreground">{lead.phone || "-"}</p>
+                                    </div>
+                                    <Badge variant="outline" className="shrink-0">
+                                        {stages.find((stage) => stage.id === lead.stage_id)?.name || "Etap"}
+                                    </Badge>
+                                </div>
+                            </div>
+
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                <Input
+                                    value={mergeSearch}
+                                    onChange={(event) => setMergeSearch(event.target.value)}
+                                    placeholder="Lid qidirish..."
+                                    className="pl-9"
+                                />
+                            </div>
+
+                            <div className="max-h-[340px] space-y-2 overflow-y-auto pr-1">
+                                {filteredMergeCandidates.length === 0 ? (
+                                    <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                                        Mos lid topilmadi
+                                    </div>
+                                ) : (
+                                    filteredMergeCandidates.map((candidate) => {
+                                        const isSelected = selectedMergeLeadId === candidate.id;
+                                        const stageName = stages.find((stage) => stage.id === candidate.stage_id)?.name || "Etap";
+
+                                        return (
+                                            <button
+                                                key={candidate.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    setSelectedMergeLeadId(candidate.id);
+                                                    setMergeError("");
+                                                }}
+                                                className={`w-full rounded-md border p-3 text-left transition-colors ${isSelected
+                                                    ? "border-primary bg-primary/10"
+                                                    : "border-border bg-background hover:border-primary/40 hover:bg-accent/50"
+                                                    }`}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-sm font-medium">{candidate.name || "-"}</p>
+                                                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                                            <span>{candidate.phone || "-"}</span>
+                                                            {candidate.phone_2 && <span>{candidate.phone_2}</span>}
+                                                            {candidate.location && <span>{candidate.location}</span>}
+                                                        </div>
+                                                    </div>
+                                                    <Badge variant="outline" className="shrink-0 text-[10px]">
+                                                        {stageName}
+                                                    </Badge>
+                                                </div>
+                                            </button>
+                                        );
+                                    })
+                                )}
+                            </div>
+
+                            {mergeError && (
+                                <p className="text-sm text-destructive">{mergeError}</p>
+                            )}
+                        </div>
+
+                        <DialogFooter>
+                            <Button
+                                variant="outline"
+                                onClick={() => setIsMergeDialogOpen(false)}
+                                disabled={isMergeSubmitting}
+                            >
+                                Bekor qilish
+                            </Button>
+                            <Button
+                                onClick={handleMergeLeads}
+                                disabled={!selectedMergeLead || isMergeSubmitting}
+                            >
+                                {isMergeSubmitting ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                    <GitMerge className="mr-2 h-4 w-4" />
+                                )}
+                                Birlashtirish
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
 
                 {/* Task Complete Dialog */}
                 <Dialog open={!!completingTaskId} onOpenChange={(open) => { if (!open) setCompletingTaskId(null); }}>

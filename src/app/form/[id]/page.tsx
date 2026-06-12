@@ -23,23 +23,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { usePublicForm, useSubmitForm } from "@/hooks/use-forms";
-
-// Location options
-const LOCATIONS = [
-    "Toshkent",
-    "Namangan",
-    "Andijon",
-    "Farg'ona",
-    "Samarqand",
-    "Buxoro",
-    "Xorazm",
-    "Qashqadaryo",
-    "Surxondaryo",
-    "Jizzax",
-    "Sirdaryo",
-    "Navoiy",
-    "Qoraqalpog'iston",
-];
+import { UZBEKISTAN_REGIONS } from "@/lib/lead-options";
 
 export default function PublicFormPage() {
     const params = useParams();
@@ -202,7 +186,7 @@ export default function PublicFormPage() {
                             Muvaffaqiyatli yuborildi!
                         </h2>
                         <p className="text-muted-foreground">
-                            Sizning so'rovingiz qabul qilindi. Tez orada siz bilan bog'lanamiz.
+                            Sizning so&apos;rovingiz qabul qilindi. Tez orada siz bilan bog&apos;lanamiz.
                         </p>
                     </CardContent>
                 </Card>
@@ -286,7 +270,7 @@ export default function PublicFormPage() {
                                     <SelectValue placeholder="Viloyatni tanlang" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {LOCATIONS.map((location) => (
+                                    {UZBEKISTAN_REGIONS.map((location) => (
                                         <SelectItem key={location} value={location}>
                                             {location}
                                         </SelectItem>

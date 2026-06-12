@@ -30,7 +30,6 @@ import {
     MoreHorizontal,
     Edit2,
     Trash2,
-    Phone,
     User,
     Loader2,
     GripVertical,
@@ -43,11 +42,13 @@ import {
     Save,
     Clock3,
     ClipboardCheck,
+    AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { useBranch } from "@/components/app-sidebar";
 import {
     Select,
     SelectContent,
@@ -99,6 +100,7 @@ import {
 } from "@/hooks/use-stage-automation";
 import { LeadSheet, type LeadMergeInput } from "@/components/lead-sheet";
 import { createClient } from "@/lib/supabase/client";
+import { getLeadDuplicateFieldLabels } from "@/lib/lead-duplicates";
 
 const DEFAULT_STAGE_COLOR = "#6366f1";
 const STAGE_COLORS = [
@@ -258,6 +260,8 @@ function LeadCard({
         zIndex: isDragging || isDragOverlay ? 1000 : 1,
     };
     const hasPendingTasks = (lead.pending_tasks?.length || 0) > 0;
+    const duplicateFieldLabels = getLeadDuplicateFieldLabels(lead.duplicate_fields);
+    const hasDuplicate = duplicateFieldLabels.length > 0;
 
     return (
         <div
@@ -290,9 +294,21 @@ function LeadCard({
                         )}
                     </div>
                     <div>
-                        <p className="text-sm font-medium text-foreground line-clamp-1">
-                            {lead.name}
-                        </p>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                            <p className="min-w-0 text-sm font-medium text-foreground line-clamp-1">
+                                {lead.name}
+                            </p>
+                            {hasDuplicate && (
+                                <Badge
+                                    variant="outline"
+                                    title={`Dubl: ${duplicateFieldLabels.join(", ")}`}
+                                    className="h-5 shrink-0 gap-1 border-amber-500/50 bg-amber-500/10 px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+                                >
+                                    <AlertTriangle className="h-3 w-3" />
+                                    Dubl
+                                </Badge>
+                            )}
+                        </div>
                         <p className="text-xs text-muted-foreground">{lead.phone}</p>
                     </div>
                 </div>
@@ -312,13 +328,6 @@ function LeadCard({
             </div>
 
             <div className="space-y-1.5" onClick={() => onClick?.(lead)}>
-                {lead.phone_2 && (
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Phone className="h-3 w-3" />
-                        <span>{lead.phone_2}</span>
-                    </div>
-                )}
-               
                <div className="w-full flex items-center justify-between">
                 {lead.employee && (
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -826,6 +835,8 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const { data: employee, isLoading: employeeLoading, error: employeeError } = useEmployee();
     const { data: pipeline, isLoading: pipelineLoading, error: pipelineError } = usePipeline(pipelineId);
     const { data: stages = [], isLoading: stagesLoading, error: stagesError } = useStages(pipelineId);
+    const { selectedBranch } = useBranch();
+    const selectedBranchId = selectedBranch?.id ?? null;
 
     const [searchQuery, setSearchQuery] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -897,8 +908,16 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
     const isAdmin = employee?.role === "super-admin";
     const { data: triggerEmployees = [], isLoading: triggerEmployeesLoading } = useBranchEmployees(
-        isAdmin ? pipeline?.branch_id : null
+        selectedBranchId,
+        "manager"
     );
+    const leadSheetEmployees = useMemo(() => {
+        return triggerEmployees.map((item) => ({
+            id: item.id,
+            name: item.name,
+            email: item.email,
+        }));
+    }, [triggerEmployees]);
     // For regular users, filter leads by their employee_id
     const employeeId = isAdmin ? null : employee?.id;
     const leadEmployeeId = employee?.id;
@@ -2145,6 +2164,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     onClose={handleCloseLeadSheet}
                     stages={stages}
                     onUpdateLead={handleUpdateLead}
+                    employees={leadSheetEmployees}
                     mergeCandidates={visibleMergeCandidates}
                     onMergeLeads={handleMergeLeads}
                     isUpdating={updateLeadMutation.isPending}

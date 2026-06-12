@@ -32,15 +32,21 @@ export interface Lead {
     name: string;
     phone: string;
     phone_2?: string;
+    budget?: number | string | null;
+    passport_series?: string | null;
+    jshshr?: number | string | null;
+    fakultet?: string | null;
+    duplicate_fields?: string[] | null;
+    duplicate_count?: number | null;
     utm?: string;
     date_of_year?: string;
     gender?: string;
     status?: string;
     stage_id: string;
     pipeline_id: string;
-    employee_id?: string;
+    employee_id?: string | null;
     age?: number;
-    location?: string;
+    location?: string | null;
     created_at?: string;
     updated_at?: string;
     // Relations
@@ -241,7 +247,7 @@ export function useLeads(pipelineId: string, searchQuery?: string, employeeId?: 
 
             if (searchQuery && searchQuery.trim()) {
                 const search = searchQuery.trim().toLowerCase();
-                query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%,phone_2.ilike.%${search}%`);
+                query = query.or(getLeadSearchFilter(search));
             }
 
             const { data, error } = await query;
@@ -271,6 +277,23 @@ const DEFAULT_STAGE_LEADS_LIMIT = 20;
 
 function normalizeLeadSearch(searchQuery?: string) {
     return searchQuery?.trim().toLowerCase() || "";
+}
+
+function getLeadSearchFilter(search: string) {
+    const filters = [
+        `name.ilike.%${search}%`,
+        `phone.ilike.%${search}%`,
+        `phone_2.ilike.%${search}%`,
+        `passport_series.ilike.%${search}%`,
+        `fakultet.ilike.%${search}%`,
+        `location.ilike.%${search}%`,
+    ];
+
+    if (/^\d{14}$/.test(search)) {
+        filters.push(`jshshr.eq.${search}`);
+    }
+
+    return filters.join(",");
 }
 
 export const stageLeadKeys = {
@@ -309,7 +332,7 @@ export function useStageLeads({
             }
 
             if (normalizedSearch) {
-                query = query.or(`name.ilike.%${normalizedSearch}%,phone.ilike.%${normalizedSearch}%,phone_2.ilike.%${normalizedSearch}%`);
+                query = query.or(getLeadSearchFilter(normalizedSearch));
             }
 
             const { data, error, count } = await query;
@@ -357,7 +380,7 @@ export function useLoadMoreStageLeads() {
             }
 
             if (normalizedSearch) {
-                query = query.or(`name.ilike.%${normalizedSearch}%,phone.ilike.%${normalizedSearch}%,phone_2.ilike.%${normalizedSearch}%`);
+                query = query.or(getLeadSearchFilter(normalizedSearch));
             }
 
             const { data, error } = await query;

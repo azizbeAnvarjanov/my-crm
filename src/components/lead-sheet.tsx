@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react"
-import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle, History, MessageSquare, GitBranch, UserCog, ListChecks, CheckCircle2, RotateCcw, FileText, GitMerge, Search, type LucideIcon } from "lucide-react";
+import { X, Save, Loader2, User, Phone, MapPin, Calendar, Hash, Plus, Edit2, Trash2, PhoneCall, Play, Pause, StickyNote, PhoneIncoming, PhoneOutgoing, Check, Clock, AlertCircle, History, MessageSquare, GitBranch, UserCog, ListChecks, CheckCircle2, RotateCcw, FileText, GitMerge, Search, ChevronsUpDown, GraduationCap, IdCard, Wallet, type LucideIcon } from "lucide-react";
 import {
     Sheet,
     SheetContent,
@@ -25,10 +25,18 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
 import { Lead, Stage } from "@/hooks/use-pipeline";
 import { useTasksByLead, useCreateTask, useUpdateTask, useDeleteTask, useToggleTaskStatus, TASK_TYPES, type Task, type TaskType } from "@/hooks/use-tasks";
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
+import { FACULTY_OPTIONS, UZBEKISTAN_REGIONS } from "@/lib/lead-options";
+import { getLeadDuplicateFieldLabels } from "@/lib/lead-duplicates";
 import { Call, getCallStatusLabel, normalizeCallRow } from "@/hooks/use-calls";
 import { useCreateLeadTimelineNote, useLeadTimelineEvents, type LeadTimelineEvent, type LeadTimelineMetadata } from "@/hooks/use-lead-timeline";
 import {
@@ -52,11 +60,18 @@ interface LeadSheetProps {
     onClose: () => void;
     stages: Stage[];
     onUpdateLead: (leadId: string, updates: Partial<Lead>) => Promise<void>;
+    employees?: LeadSheetEmployee[];
     mergeCandidates?: Lead[];
     onMergeLeads?: (input: LeadMergeInput) => Promise<void>;
     isUpdating?: boolean;
     isMerging?: boolean;
 }
+
+type LeadSheetEmployee = {
+    id: string;
+    name: string;
+    email?: string;
+};
 
 type LeadUpdate = Partial<Omit<Lead, "date_of_year">> & {
     date_of_year?: string | null;
@@ -326,7 +341,126 @@ function getTodayDateValue(): string {
     return new Date().toISOString().split("T")[0];
 }
 
-type FillableLeadField = "name" | "location" | "age" | "gender" | "date_of_year" | "utm" | "employee_id" | "status";
+type SearchableSelectOption = {
+    value: string;
+    label: string;
+    description?: string;
+};
+
+const LOCATION_SELECT_OPTIONS = UZBEKISTAN_REGIONS.map((location) => ({
+    value: location,
+    label: location,
+}));
+
+const FACULTY_SELECT_OPTIONS = FACULTY_OPTIONS.map((faculty) => ({
+    value: faculty,
+    label: faculty,
+}));
+
+function SearchableSelect({
+    id,
+    value,
+    options,
+    placeholder,
+    searchPlaceholder,
+    emptyMessage,
+    onChange,
+    disabled = false,
+}: {
+    id: string;
+    value?: string | null;
+    options: SearchableSelectOption[];
+    placeholder: string;
+    searchPlaceholder: string;
+    emptyMessage: string;
+    onChange: (value: string) => void;
+    disabled?: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const [searchValue, setSearchValue] = useState("");
+    const selectedOption = options.find((option) => option.value === value);
+    const normalizedSearch = searchValue.trim().toLowerCase();
+    const filteredOptions = normalizedSearch
+        ? options.filter((option) => (
+            option.label.toLowerCase().includes(normalizedSearch)
+            || option.value.toLowerCase().includes(normalizedSearch)
+            || option.description?.toLowerCase().includes(normalizedSearch)
+        ))
+        : options;
+
+    return (
+        <Popover
+            open={open}
+            onOpenChange={(nextOpen) => {
+                setOpen(nextOpen);
+                if (!nextOpen) setSearchValue("");
+            }}
+        >
+            <PopoverTrigger asChild>
+                <Button
+                    id={id}
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={open}
+                    disabled={disabled}
+                    className="w-full justify-between px-3 font-normal"
+                >
+                    <span className={cn("truncate", !selectedOption && !value && "text-muted-foreground")}>
+                        {selectedOption?.label || value || placeholder}
+                    </span>
+                    <ChevronsUpDown className="h-4 w-4 opacity-50" />
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+                <div className="border-b p-2">
+                    <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                            value={searchValue}
+                            onChange={(event) => setSearchValue(event.target.value)}
+                            placeholder={searchPlaceholder}
+                            className="h-9 pl-8"
+                        />
+                    </div>
+                </div>
+                <div className="max-h-64 overflow-y-auto p-1">
+                    {filteredOptions.length === 0 ? (
+                        <p className="px-3 py-6 text-center text-sm text-muted-foreground">{emptyMessage}</p>
+                    ) : (
+                        filteredOptions.map((option) => {
+                            const isSelected = option.value === value;
+
+                            return (
+                                <button
+                                    key={option.value}
+                                    type="button"
+                                    onClick={() => {
+                                        onChange(option.value);
+                                        setOpen(false);
+                                        setSearchValue("");
+                                    }}
+                                    className={cn(
+                                        "flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent",
+                                        isSelected && "bg-accent"
+                                    )}
+                                >
+                                    <Check className={cn("h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />
+                                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                                    {option.description && (
+                                        <span className="shrink-0 text-xs text-muted-foreground">{option.description}</span>
+                                    )}
+                                </button>
+                            );
+                        })
+                    )}
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
+
+type FillableLeadField = "name" | "location" | "age" | "gender" | "date_of_year" | "utm" | "employee_id" | "status" | "budget" | "passport_series" | "jshshr" | "fakultet";
 
 const FILLABLE_LEAD_FIELDS: FillableLeadField[] = [
     "name",
@@ -337,6 +471,10 @@ const FILLABLE_LEAD_FIELDS: FillableLeadField[] = [
     "utm",
     "employee_id",
     "status",
+    "budget",
+    "passport_series",
+    "jshshr",
+    "fakultet",
 ];
 
 function isMissingLeadValue(value: unknown): boolean {
@@ -412,12 +550,14 @@ export function LeadSheet({
     onClose,
     stages,
     onUpdateLead,
+    employees = [],
     mergeCandidates = [],
     onMergeLeads,
     isUpdating = false,
     isMerging = false,
 }: LeadSheetProps) {
     const [editedLead, setEditedLead] = useState<Partial<Lead>>({});
+    const [leadFieldErrors, setLeadFieldErrors] = useState<Record<string, string>>({});
     const [hasChanges, setHasChanges] = useState(false);
     const [calls, setCalls] = useState<Call[]>([]);
     const [loadingCalls, setLoadingCalls] = useState(false);
@@ -506,8 +646,26 @@ export function LeadSheet({
         () => availableMergeCandidates.find((candidate) => candidate.id === selectedMergeLeadId) || null,
         [availableMergeCandidates, selectedMergeLeadId]
     );
+    const duplicateFieldLabels = useMemo(
+        () => getLeadDuplicateFieldLabels(lead?.duplicate_fields),
+        [lead?.duplicate_fields]
+    );
     const isMergeSubmitting = isMerging || createTimelineNoteMutation.isPending;
     const canOpenMergeDialog = Boolean(onMergeLeads && availableMergeCandidates.length > 0 && !hasChanges && !isUpdating && !isMergeSubmitting);
+    const employeeSelectOptions = useMemo<SearchableSelectOption[]>(() => {
+        const optionsById = new Map<string, SearchableSelectOption>();
+
+        employees.forEach((item) => {
+            if (!item.id) return;
+            optionsById.set(item.id, {
+                value: item.id,
+                label: item.name,
+                description: item.email,
+            });
+        });
+
+        return Array.from(optionsById.values()).sort((left, right) => left.label.localeCompare(right.label));
+    }, [employees]);
 
     useEffect(() => {
         if (lead) {
@@ -515,14 +673,20 @@ export function LeadSheet({
                 name: lead.name,
                 phone: formatUzPhone(lead.phone),
                 phone_2: formatOptionalUzPhone(lead.phone_2),
+                budget: lead.budget ?? null,
+                passport_series: lead.passport_series || "",
+                jshshr: lead.jshshr ?? null,
                 location: lead.location || "",
+                fakultet: lead.fakultet || "",
                 age: lead.age,
                 gender: lead.gender || "",
                 date_of_year: lead.date_of_year || "",
                 utm: lead.utm || "",
                 stage_id: lead.stage_id,
+                employee_id: lead.employee_id || "",
             });
             setHasChanges(false);
+            setLeadFieldErrors({});
             setTimelineNote("");
             setTimelineComposerMode("note");
             setTimelineTaskType("qayta_aloqa");
@@ -597,11 +761,34 @@ export function LeadSheet({
 
     const handleFieldChange = <K extends keyof Lead>(field: K, value: Lead[K]) => {
         setEditedLead(prev => ({ ...prev, [field]: value }));
+        setLeadFieldErrors((prev) => {
+            const fieldName = String(field);
+            if (!prev[fieldName]) return prev;
+
+            const next = { ...prev };
+            delete next[fieldName];
+            return next;
+        });
         setHasChanges(true);
     };
 
     const handlePhoneFieldChange = (field: "phone" | "phone_2", value: string) => {
         handleFieldChange(field, formatUzPhone(value));
+    };
+
+    const handleBudgetChange = (value: string) => {
+        const normalizedValue = value.replace(",", ".");
+        handleFieldChange("budget", normalizedValue === "" ? null : Number(normalizedValue));
+    };
+
+    const handlePassportSeriesChange = (value: string) => {
+        const normalizedValue = value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 9);
+        handleFieldChange("passport_series", normalizedValue);
+    };
+
+    const handleJshshrChange = (value: string) => {
+        const digits = value.replace(/\D/g, "").slice(0, 14);
+        handleFieldChange("jshshr", digits);
     };
 
     const handlePhoneFocus = (field: "phone" | "phone_2") => {
@@ -617,9 +804,47 @@ export function LeadSheet({
         const cleanedData: LeadUpdate = { ...editedLead };
         cleanedData.phone = getSavableUzPhone(cleanedData.phone);
         cleanedData.phone_2 = getSavableUzPhone(cleanedData.phone_2);
+        cleanedData.passport_series = String(cleanedData.passport_series ?? "").trim().toUpperCase();
 
         if (cleanedData.date_of_year === "") {
             cleanedData.date_of_year = null;
+        }
+
+        if (cleanedData.location === "") {
+            cleanedData.location = null;
+        }
+
+        if (cleanedData.fakultet === "") {
+            cleanedData.fakultet = null;
+        }
+
+        const jshshrDigits = String(cleanedData.jshshr ?? "").replace(/\D/g, "");
+        const nextErrors: Record<string, string> = {};
+
+        if (!/^[A-Z]{2}[0-9]{7}$/.test(cleanedData.passport_series)) {
+            nextErrors.passport_series = "Format: AD1234567";
+        }
+
+        if (jshshrDigits.length !== 14) {
+            nextErrors.jshshr = "JSHSHR 14 ta raqam bo'lishi kerak";
+        }
+
+        if (
+            cleanedData.budget !== null
+            && cleanedData.budget !== undefined
+            && (Number.isNaN(Number(cleanedData.budget)) || Number(cleanedData.budget) < 0)
+        ) {
+            nextErrors.budget = "Budjet 0 yoki undan katta son bo'lishi kerak";
+        }
+
+        if (Object.keys(nextErrors).length > 0) {
+            setLeadFieldErrors(nextErrors);
+            return;
+        }
+
+        cleanedData.jshshr = Number(jshshrDigits);
+        if (cleanedData.budget !== null && cleanedData.budget !== undefined) {
+            cleanedData.budget = Number(cleanedData.budget);
         }
 
         try {
@@ -879,7 +1104,8 @@ export function LeadSheet({
                                 >
                                     {currentStage?.name || "No Stage"}
                                 </Badge> */}
-                                    {/* Stage Selection */}
+                                {/* Stage Selection */}
+                                <div className="flex gap-2">
                                     <Select
                                         value={editedLead.stage_id || lead.stage_id}
                                         onValueChange={(value) => handleFieldChange("stage_id", value)}
@@ -901,41 +1127,41 @@ export function LeadSheet({
                                             ))}
                                         </SelectContent>
                                     </Select>
-                                <div className="space-y-2 text-xs text-muted-foreground min-w-[150px]">
-                                <div className="flex justify-between">
-                                    <span>Yaratilgan:</span>
-                                    <span>{lead.created_at ? new Date(lead.created_at).toLocaleDateString("uz-UZ") : "-"}</span>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={handleOpenMergeDialog}
+                                        disabled={!canOpenMergeDialog || isMergeSubmitting}
+                                        className="w-fit"
+                                        title={hasChanges ? "Avval o'zgarishlarni saqlang" : undefined}
+                                    >
+                                        {isMergeSubmitting ? (
+                                            <Loader2 className=" h-4 w-4 animate-spin" />
+                                        ) : (
+                                            <GitMerge size={10} className="" />
+                                        )}                                    </Button>
                                 </div>
-                                <div className="flex justify-between">
-                                    <span>Yangilangan:</span>
-                                    <span>{lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("uz-UZ") : "-"}</span>
+                                <div className="space-y-2 text-xs text-muted-foreground min-w-[150px]">
+                                    <div className="flex justify-between">
+                                        <span>Yaratilgan:</span>
+                                        <span>{lead.created_at ? new Date(lead.created_at).toLocaleDateString("uz-UZ") : "-"}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Yangilangan:</span>
+                                        <span>{lead.updated_at ? new Date(lead.updated_at).toLocaleDateString("uz-UZ") : "-"}</span>
+                                    </div>
+
+                                    {lead.employee && (
+                                        <div className="flex justify-between">
+                                            <span>Mas&apos;ul xodim:</span>
+                                            <span>{lead.employee.name}</span>
+                                        </div>
+                                    )}
                                 </div>
 
-                                {lead.employee && (
-                                    <div className="flex justify-between">
-                                        <span>Mas&apos;ul xodim:</span>
-                                        <span>{lead.employee.name}</span>
-                                    </div>
+                                {mergeError && !isMergeDialogOpen && (
+                                    <p className="text-xs text-destructive">{mergeError}</p>
                                 )}
-                            </div>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={handleOpenMergeDialog}
-                                disabled={!canOpenMergeDialog || isMergeSubmitting}
-                                className="w-full justify-start"
-                                title={hasChanges ? "Avval o'zgarishlarni saqlang" : undefined}
-                            >
-                                {isMergeSubmitting ? (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                    <GitMerge className="mr-2 h-4 w-4" />
-                                )}
-                                Boshqa lid bilan birlashtirish
-                            </Button>
-                            {mergeError && !isMergeDialogOpen && (
-                                <p className="text-xs text-destructive">{mergeError}</p>
-                            )}
                             </div>
                         </SheetHeader>
 
@@ -948,9 +1174,55 @@ export function LeadSheet({
                                     Asosiy ma&apos;lumotlar
                                 </h3>
 
+                                {duplicateFieldLabels.length > 0 && (
+                                    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                                        <div className="flex items-center gap-2 font-medium">
+                                            <AlertCircle className="h-4 w-4" />
+                                            Dubl lead
+                                        </div>
+                                        <p className="mt-1 text-xs">
+                                            Bir xil maydonlar: {duplicateFieldLabels.join(", ")}
+                                        </p>
+                                    </div>
+                                )}
+
                                 <div className="space-y-3">
                                     <div className="space-y-2">
-                                        <Label htmlFor="name">Ism</Label>
+                                        <Label htmlFor="employee_id">Mas&apos;ul xodim</Label>
+                                        <SearchableSelect
+                                            id="employee_id"
+                                            value={editedLead.employee_id || ""}
+                                            options={employeeSelectOptions}
+                                            placeholder="Xodim tanlang"
+                                            searchPlaceholder="Xodim qidirish..."
+                                            emptyMessage="Xodim topilmadi"
+                                            onChange={(value) => handleFieldChange("employee_id", value)}
+                                            disabled={employeeSelectOptions.length === 0}
+                                        />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label htmlFor="budget">Budjet</Label>
+                                        <div className="relative">
+                                            <Wallet className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                            <Input
+                                                id="budget"
+                                                type="number"
+                                                min={0}
+                                                step="any"
+                                                value={editedLead.budget ?? ""}
+                                                onChange={(e) => handleBudgetChange(e.target.value)}
+                                                className={cn("pl-9", leadFieldErrors.budget && "border-destructive")}
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                        {leadFieldErrors.budget && (
+                                            <p className="text-xs text-destructive">{leadFieldErrors.budget}</p>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label htmlFor="name">Name</Label>
                                         <div className="relative">
                                             <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                                             <Input
@@ -963,6 +1235,100 @@ export function LeadSheet({
                                         </div>
                                     </div>
 
+                                    <div className="space-y-2">
+                                        <Label htmlFor="passport_series">Passport seriya</Label>
+                                        <div className="relative">
+                                            <IdCard className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                            <Input
+                                                id="passport_series"
+                                                value={editedLead.passport_series || ""}
+                                                onChange={(e) => handlePassportSeriesChange(e.target.value)}
+                                                maxLength={9}
+                                                className={cn("pl-9", leadFieldErrors.passport_series && "border-destructive")}
+                                                placeholder="AD1234567"
+                                            />
+                                        </div>
+                                        {leadFieldErrors.passport_series && (
+                                            <p className="text-xs text-destructive">{leadFieldErrors.passport_series}</p>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label htmlFor="jshshr">JSHSHR</Label>
+                                        <div className="relative">
+                                            <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                            <Input
+                                                id="jshshr"
+                                                inputMode="numeric"
+                                                maxLength={14}
+                                                value={editedLead.jshshr ?? ""}
+                                                onChange={(e) => handleJshshrChange(e.target.value)}
+                                                className={cn("pl-9", leadFieldErrors.jshshr && "border-destructive")}
+                                                placeholder="12345678901234"
+                                            />
+                                        </div>
+                                        {leadFieldErrors.jshshr && (
+                                            <p className="text-xs text-destructive">{leadFieldErrors.jshshr}</p>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label htmlFor="date_of_year">Tug&apos;ilgan kun</Label>
+                                        <div className="relative">
+                                            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                            <Input
+                                                id="date_of_year"
+                                                type="date"
+                                                value={editedLead.date_of_year || ""}
+                                                onChange={(e) => handleFieldChange("date_of_year", e.target.value)}
+                                                className="pl-9"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label htmlFor="location" className="flex items-center gap-2">
+                                            <MapPin className="h-4 w-4 text-muted-foreground" />
+                                            Location
+                                        </Label>
+                                        <SearchableSelect
+                                            id="location"
+                                            value={editedLead.location || ""}
+                                            options={LOCATION_SELECT_OPTIONS}
+                                            placeholder="Viloyatni tanlang"
+                                            searchPlaceholder="Viloyat qidirish..."
+                                            emptyMessage="Viloyat topilmadi"
+                                            onChange={(value) => handleFieldChange("location", value)}
+                                        />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label htmlFor="fakultet" className="flex items-center gap-2">
+                                            <GraduationCap className="h-4 w-4 text-muted-foreground" />
+                                            Fakultet
+                                        </Label>
+                                        <SearchableSelect
+                                            id="fakultet"
+                                            value={editedLead.fakultet || ""}
+                                            options={FACULTY_SELECT_OPTIONS}
+                                            placeholder="Fakultetni tanlang"
+                                            searchPlaceholder="Fakultet qidirish..."
+                                            emptyMessage="Fakultet topilmadi"
+                                            onChange={(value) => handleFieldChange("fakultet", value)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <Separator />
+
+                            {/* Aloqa ma'lumotlari */}
+                            <div className="space-y-4">
+                                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                                    Aloqa
+                                </h3>
+
+                                <div className="space-y-3">
                                     <div className="space-y-2">
                                         <Label htmlFor="phone">Telefon</Label>
                                         <div className="flex gap-2">
@@ -1022,20 +1388,6 @@ export function LeadSheet({
                                             </Button>
                                         </div>
                                     </div>
-
-                                    <div className="space-y-2">
-                                        <Label htmlFor="location">Manzil</Label>
-                                        <div className="relative">
-                                            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                            <Input
-                                                id="location"
-                                                value={editedLead.location || ""}
-                                                onChange={(e) => handleFieldChange("location", e.target.value)}
-                                                className="pl-9"
-                                                placeholder="Manzil"
-                                            />
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
 
@@ -1077,20 +1429,6 @@ export function LeadSheet({
                                                 <SelectItem value="female">Ayol</SelectItem>
                                             </SelectContent>
                                         </Select>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="date_of_year">Tug&apos;ilgan sana</Label>
-                                    <div className="relative">
-                                        <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                        <Input
-                                            id="date_of_year"
-                                            type="date"
-                                            value={editedLead.date_of_year || ""}
-                                            onChange={(e) => handleFieldChange("date_of_year", e.target.value)}
-                                            className="pl-9"
-                                        />
                                     </div>
                                 </div>
 

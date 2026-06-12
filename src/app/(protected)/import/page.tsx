@@ -31,11 +31,22 @@ interface ColumnMapping {
     supabaseColumn: string;
 }
 
+type ExcelCell = string | number | boolean | Date | null | undefined;
+type ExcelRow = ExcelCell[];
+type ImportLeadRow = Record<string, string | number | null> & {
+    stage_id: string;
+    pipeline_id: string;
+};
+
 const SUPABASE_COLUMNS = [
     { value: "none", label: "Import qilinmasin" },
     { value: "name", label: "Ism (Name)" },
     { value: "phone", label: "Telefon (Phone)" },
     { value: "phone_2", label: "Telefon 2 (Phone 2)" },
+    { value: "budget", label: "Budjet (Budget)" },
+    { value: "passport_series", label: "Passport seriya" },
+    { value: "jshshr", label: "JSHSHR" },
+    { value: "fakultet", label: "Fakultet" },
     { value: "utm", label: "UTM" },
     { value: "age", label: "Yosh (Age)" },
     { value: "location", label: "Manzil (Location)" },
@@ -49,7 +60,7 @@ export default function ImportPage() {
 
     const [file, setFile] = useState<File | null>(null);
     const [excelColumns, setExcelColumns] = useState<ExcelColumn[]>([]);
-    const [excelData, setExcelData] = useState<any[]>([]);
+    const [excelData, setExcelData] = useState<ExcelRow[]>([]);
     const [selectedPipeline, setSelectedPipeline] = useState<string>("");
     const [selectedStage, setSelectedStage] = useState<string>("");
     const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>([]);
@@ -110,7 +121,7 @@ export default function ImportPage() {
                 const data = new Uint8Array(e.target?.result as ArrayBuffer);
                 const workbook = XLSX.read(data, { type: 'array' });
                 const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+                const jsonData = XLSX.utils.sheet_to_json<ExcelRow>(firstSheet, { header: 1 });
 
                 if (jsonData.length === 0) {
                     alert('Excel fayl bo\'sh!');
@@ -118,8 +129,8 @@ export default function ImportPage() {
                 }
 
                 // Extract column names from first row
-                const headers = jsonData[0] as string[];
-                const dataRows = jsonData.slice(1) as any[][];
+                const headers = jsonData[0].map((header) => String(header ?? ""));
+                const dataRows = jsonData.slice(1);
 
                 // Get sample data for each column
                 const columns: ExcelColumn[] = headers.map((header, index) => ({
@@ -191,7 +202,7 @@ export default function ImportPage() {
                 const batch = excelData.slice(i, Math.min(i + batchSize, totalRows));
 
                 const leadsToInsert = batch.map(row => {
-                    const lead: any = {
+                    const lead: ImportLeadRow = {
                         stage_id: selectedStage,
                         pipeline_id: selectedPipeline,
                     };
@@ -200,7 +211,33 @@ export default function ImportPage() {
                     Object.entries(columnIndices).forEach(([supabaseCol, excelIndex]) => {
                         const value = row[excelIndex];
                         if (value !== undefined && value !== null && value !== '') {
-                            lead[supabaseCol] = value.toString();
+                            const textValue = value.toString().trim();
+
+                            if (supabaseCol === "budget" || supabaseCol === "age") {
+                                const numericValue = Number(textValue.replace(",", "."));
+                                if (!Number.isNaN(numericValue)) {
+                                    lead[supabaseCol] = numericValue;
+                                }
+                                return;
+                            }
+
+                            if (supabaseCol === "jshshr") {
+                                const digits = textValue.replace(/\D/g, "").slice(0, 14);
+                                if (digits.length === 14) {
+                                    lead[supabaseCol] = Number(digits);
+                                }
+                                return;
+                            }
+
+                            if (supabaseCol === "passport_series") {
+                                const passportSeries = textValue.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 9);
+                                if (/^[A-Z]{2}[0-9]{7}$/.test(passportSeries)) {
+                                    lead[supabaseCol] = passportSeries;
+                                }
+                                return;
+                            }
+
+                            lead[supabaseCol] = textValue;
                         }
                     });
 
@@ -311,7 +348,7 @@ export default function ImportPage() {
                                     </div>
                                 </div>
                                 <p className="text-sm text-muted-foreground">
-                                    "Biriktirilmagan Lidlar" sahifasiga o'tkazilmoqda...
+                                    &quot;Biriktirilmagan Lidlar&quot; sahifasiga o&apos;tkazilmoqda...
                                 </p>
                             </div>
 
@@ -321,7 +358,7 @@ export default function ImportPage() {
                                 className="w-full mt-4"
                                 size="lg"
                             >
-                                Hozir o'tish
+                                Hozir o&apos;tish
                                 <ArrowRight className="ml-2 h-5 w-5" />
                             </Button>
                         </div>
@@ -413,7 +450,7 @@ export default function ImportPage() {
                             <CardHeader>
                                 <CardTitle>2. Voronka va Etap tanlash</CardTitle>
                                 <CardDescription>
-                                    Lidlar qaysi voronka va etap'ga import qilinishini tanlang
+                                    Lidlar qaysi voronka va etap&apos;ga import qilinishini tanlang
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">

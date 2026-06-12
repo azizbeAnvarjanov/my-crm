@@ -149,21 +149,27 @@ export function useTasks(options: UseTasksOptions) {
 }
 
 // Fetch employees by branch for filtering
-export function useBranchEmployees(branchId: string | null | undefined) {
+export function useBranchEmployees(branchId: string | null | undefined, role?: "super-admin" | "manager") {
     return useQuery({
-        queryKey: ["employees", "branch", branchId || "none"],
+        queryKey: ["employees", "branch", branchId || "none", role || "all"],
         queryFn: async () => {
             if (!branchId) return [];
 
             const supabase = createClient();
-            const { data, error } = await supabase
+            let query = supabase
                 .from("xodimlar")
-                .select("id, name, email")
+                .select("id, name, email, role")
                 .eq("branch_id", branchId)
                 .order("name", { ascending: true });
 
+            if (role) {
+                query = query.eq("role", role);
+            }
+
+            const { data, error } = await query;
+
             if (error) throw error;
-            return data as { id: string; name: string; email: string }[];
+            return data as { id: string; name: string; email: string; role: "super-admin" | "manager" }[];
         },
         enabled: !!branchId,
     });

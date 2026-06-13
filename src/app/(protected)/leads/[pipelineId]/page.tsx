@@ -139,14 +139,23 @@ const STAGE_TRIGGER_ASSIGNEE_MODES: { value: StageAutomationAssigneeMode; label:
 ];
 
 const UZBEK_PHONE_PREFIX = "+998";
-const MINI_SCROLLBAR_TRACK_WIDTH = 208;
-const MINI_SCROLLBAR_MIN_THUMB_WIDTH = 44;
-const MINI_SCROLLBAR_EDGE_OFFSET = 6;
-const MINI_SCROLLBAR_USABLE_WIDTH = MINI_SCROLLBAR_TRACK_WIDTH - MINI_SCROLLBAR_EDGE_OFFSET * 2;
 type DropPlacement = "before" | "after";
 
 function clamp(value: number, min: number, max: number) {
     return Math.min(Math.max(value, min), max);
+}
+
+function getHorizontalScrollWidth(container: HTMLElement) {
+    const content = container.firstElementChild;
+    const contentScrollWidth = content instanceof HTMLElement
+        ? Math.max(content.scrollWidth, content.getBoundingClientRect().width)
+        : 0;
+
+    return Math.max(container.scrollWidth, contentScrollWidth);
+}
+
+function getHorizontalMaxScroll(container: HTMLElement) {
+    return Math.max(getHorizontalScrollWidth(container) - container.clientWidth, 0);
 }
 
 function formatUzbekPhone(value: string) {
@@ -328,22 +337,22 @@ function LeadCard({
             </div>
 
             <div className="space-y-1.5" onClick={() => onClick?.(lead)}>
-               <div className="w-full flex items-center justify-between">
-                {lead.employee && (
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Users className="h-3 w-3" />
-                        <span>{lead.employee.name}</span>
-                    </div>
-                )}
-                {lead.updated_at && (
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <CalendarDays className="h-3 w-3" />
-                        <span className="text-xs text-muted-foreground">
-                        {getTimeAgo(lead.updated_at)}
-                    </span>
-                    </div>
-                )}
-               </div>
+                <div className="w-full flex items-center justify-between">
+                    {lead.employee && (
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Users className="h-3 w-3" />
+                            <span>{lead.employee.name}</span>
+                        </div>
+                    )}
+                    {lead.updated_at && (
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <CalendarDays className="h-3 w-3" />
+                            <span className="text-xs text-muted-foreground">
+                                {getTimeAgo(lead.updated_at)}
+                            </span>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -569,6 +578,9 @@ function StageColumn({
     dragOverStageId,
     dragOverLeadId,
     dragOverPlacement,
+    canDragStageHeader,
+    isStageHeaderDragging,
+    onStageHeaderPointerDown,
     onTotalCountChange,
     onVisibleLeadsChange,
 }: {
@@ -587,6 +599,9 @@ function StageColumn({
     dragOverStageId: string | null;
     dragOverLeadId: string | null;
     dragOverPlacement: DropPlacement | null;
+    canDragStageHeader: boolean;
+    isStageHeaderDragging: boolean;
+    onStageHeaderPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
     onTotalCountChange?: (stageId: string, totalCount: number) => void;
     onVisibleLeadsChange?: (stageId: string, leads: Lead[]) => void;
 }) {
@@ -689,9 +704,22 @@ function StageColumn({
                     className="p-3 border-b border-border flex items-center justify-between"
                     style={{ borderLeft: `4px solid ${stage.color || DEFAULT_STAGE_COLOR}` }}
                 >
-                    <div className="flex items-center gap-2">
-                        <h3 className="font-medium text-foreground">{stage.name}</h3>
-                        <Badge variant="secondary" className="text-xs">
+                    <div
+                        onPointerDown={onStageHeaderPointerDown}
+                        className={`-m-1 flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 select-none ${canDragStageHeader
+                            ? isStageHeaderDragging
+                                ? "cursor-grabbing"
+                                : "cursor-grab active:cursor-grabbing"
+                            : ""
+                            }`}
+                        title={stage.name}
+                    >
+                        <GripVertical
+                            aria-hidden="true"
+                            className={`h-4 w-4 shrink-0 transition-colors ${canDragStageHeader ? "text-primary" : "text-muted-foreground/50"}`}
+                        />
+                        <h3 className="truncate font-medium text-foreground">{stage.name}</h3>
+                        <Badge variant="secondary" className="shrink-0 text-xs">
                             {totalCount}
                         </Badge>
                     </div>
@@ -888,7 +916,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         scrollWidth: 0,
         maxScroll: 0,
     });
-    const [isMiniScrollbarDragging, setIsMiniScrollbarDragging] = useState(false);
+    const [isStageHeaderDragging, setIsStageHeaderDragging] = useState(false);
     const [dragOverStageId, setDragOverStageId] = useState<string | null>(null);
     const [dragOverLeadId, setDragOverLeadId] = useState<string | null>(null);
     const [dragOverPlacement, setDragOverPlacement] = useState<DropPlacement | null>(null);
@@ -899,9 +927,9 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
     // Scroll container ref for horizontal scrolling
     const scrollContainerRef = useRef<HTMLDivElement>(null);
-    const miniScrollbarTrackRef = useRef<HTMLDivElement>(null);
     const closeLeadSheetTimeoutRef = useRef<number | null>(null);
-    const miniScrollbarDragRef = useRef<{
+    const stageHeaderDragRef = useRef<{
+        pointerId: number;
         startX: number;
         startScrollLeft: number;
     } | null>(null);
@@ -935,37 +963,26 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         () => stages.reduce((sum, stage) => sum + (stageLeadCounts[stage.id] || 0), 0),
         [stageLeadCounts, stages]
     );
-    const miniScrollbarThumbWidth = useMemo(() => {
+    const canUseMiniScrollbar = horizontalScrollState.maxScroll > 0;
+    const miniScrollbarValue = Math.min(horizontalScrollState.scrollLeft, horizontalScrollState.maxScroll);
+    const miniScrollbarSegments = useMemo(() => (
+        stages.length > 0 ? stages.map((stage) => stage.id) : []
+    ), [stages]);
+    const miniScrollbarThumbWidthPercent = useMemo(() => {
         const { clientWidth, scrollWidth } = horizontalScrollState;
 
-        if (clientWidth <= 0 || scrollWidth <= 0) {
-            return MINI_SCROLLBAR_USABLE_WIDTH;
-        }
+        if (clientWidth <= 0 || scrollWidth <= 0) return 100;
 
-        return clamp(
-            (clientWidth / scrollWidth) * MINI_SCROLLBAR_USABLE_WIDTH,
-            MINI_SCROLLBAR_MIN_THUMB_WIDTH,
-            MINI_SCROLLBAR_USABLE_WIDTH
-        );
+        return clamp((clientWidth / scrollWidth) * 100, 18, 100);
     }, [horizontalScrollState]);
-    const miniScrollbarThumbOffset = useMemo(() => {
-        const { maxScroll, scrollLeft } = horizontalScrollState;
-        const maxThumbTravel = MINI_SCROLLBAR_USABLE_WIDTH - miniScrollbarThumbWidth;
+    const miniScrollbarThumbLeftPercent = useMemo(() => {
+        const { maxScroll } = horizontalScrollState;
+        const maxThumbTravelPercent = 100 - miniScrollbarThumbWidthPercent;
 
-        if (maxScroll <= 0 || maxThumbTravel <= 0) {
-            return 0;
-        }
+        if (maxScroll <= 0 || maxThumbTravelPercent <= 0) return 0;
 
-        return (scrollLeft / maxScroll) * maxThumbTravel;
-    }, [horizontalScrollState, miniScrollbarThumbWidth]);
-    const canUseMiniScrollbar = horizontalScrollState.maxScroll > 0;
-    const miniScrollbarSegments = useMemo(() => {
-        if (stages.length === 0) {
-            return Array.from({ length: 8 }, (_, index) => `placeholder-${index}`);
-        }
-
-        return stages.map((stage) => stage.id);
-    }, [stages]);
+        return (miniScrollbarValue / maxScroll) * maxThumbTravelPercent;
+    }, [horizontalScrollState, miniScrollbarThumbWidthPercent, miniScrollbarValue]);
     const visibleMergeCandidates = useMemo(() => {
         const leadsById = new Map<string, Lead>();
 
@@ -995,11 +1012,12 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
         if (!container) return;
 
+        const scrollWidth = getHorizontalScrollWidth(container);
         const nextState = {
             scrollLeft: container.scrollLeft,
             clientWidth: container.clientWidth,
-            scrollWidth: container.scrollWidth,
-            maxScroll: Math.max(container.scrollWidth - container.clientWidth, 0),
+            scrollWidth,
+            maxScroll: Math.max(scrollWidth - container.clientWidth, 0),
         };
 
         setHorizontalScrollState((prev) => (
@@ -1018,6 +1036,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
 
         const handleScroll = () => updateHorizontalScrollState();
         const resizeObserver = new ResizeObserver(() => updateHorizontalScrollState());
+        const rafId = window.requestAnimationFrame(updateHorizontalScrollState);
 
         container.addEventListener("scroll", handleScroll, { passive: true });
         resizeObserver.observe(container);
@@ -1030,6 +1049,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         updateHorizontalScrollState();
 
         return () => {
+            window.cancelAnimationFrame(rafId);
             container.removeEventListener("scroll", handleScroll);
             resizeObserver.disconnect();
         };
@@ -1071,90 +1091,95 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         setNewLeadErrors((prev) => (prev.phone ? { ...prev, phone: undefined } : prev));
     }, []);
 
-    const scrollBoardToRatio = useCallback((ratio: number, behavior: ScrollBehavior = "smooth") => {
-        const container = scrollContainerRef.current;
-        if (!container) return;
-
-        const maxScroll = Math.max(container.scrollWidth - container.clientWidth, 0);
-        container.scrollTo({
-            left: clamp(ratio, 0, 1) * maxScroll,
-            behavior,
-        });
-    }, []);
-
-    const handleMiniScrollbarTrackPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-        if ((event.target as HTMLElement).dataset.dragThumb === "true") {
-            return;
-        }
-
-        const track = miniScrollbarTrackRef.current;
-        if (!track) return;
-
-        const trackBounds = track.getBoundingClientRect();
-        const nextThumbLeft = clamp(
-            event.clientX - trackBounds.left - MINI_SCROLLBAR_EDGE_OFFSET - miniScrollbarThumbWidth / 2,
-            0,
-            MINI_SCROLLBAR_USABLE_WIDTH - miniScrollbarThumbWidth
-        );
-        const ratio = MINI_SCROLLBAR_USABLE_WIDTH === miniScrollbarThumbWidth
-            ? 0
-            : nextThumbLeft / (MINI_SCROLLBAR_USABLE_WIDTH - miniScrollbarThumbWidth);
-
-        scrollBoardToRatio(ratio);
-    }, [miniScrollbarThumbWidth, scrollBoardToRatio]);
-
-    const stopMiniScrollbarDragging = useCallback(() => {
-        miniScrollbarDragRef.current = null;
-        setIsMiniScrollbarDragging(false);
+    const stopStageHeaderDragging = useCallback(() => {
+        stageHeaderDragRef.current = null;
+        setIsStageHeaderDragging(false);
     }, []);
 
     useEffect(() => {
-        if (!isMiniScrollbarDragging) return;
+        if (!isStageHeaderDragging) return;
+
+        const previousCursor = document.body.style.cursor;
+        const previousUserSelect = document.body.style.userSelect;
+        const previousTouchAction = document.body.style.touchAction;
+
+        document.body.style.cursor = "grabbing";
+        document.body.style.userSelect = "none";
+        document.body.style.touchAction = "none";
+
+        return () => {
+            document.body.style.cursor = previousCursor;
+            document.body.style.userSelect = previousUserSelect;
+            document.body.style.touchAction = previousTouchAction;
+        };
+    }, [isStageHeaderDragging]);
+
+    useEffect(() => {
+        if (!isStageHeaderDragging) return;
 
         const handlePointerMove = (event: PointerEvent) => {
             const container = scrollContainerRef.current;
-            const dragState = miniScrollbarDragRef.current;
-            const maxThumbTravel = MINI_SCROLLBAR_USABLE_WIDTH - miniScrollbarThumbWidth;
+            const dragState = stageHeaderDragRef.current;
 
-            if (!container || !dragState || horizontalScrollState.maxScroll <= 0 || maxThumbTravel <= 0) {
+            if (!container || !dragState || event.pointerId !== dragState.pointerId) {
                 return;
             }
 
+            const maxScroll = getHorizontalMaxScroll(container);
             const deltaX = event.clientX - dragState.startX;
-            const nextScrollLeft = clamp(
-                dragState.startScrollLeft + (deltaX / maxThumbTravel) * horizontalScrollState.maxScroll,
-                0,
-                horizontalScrollState.maxScroll
-            );
+            const nextScrollLeft = clamp(dragState.startScrollLeft - deltaX, 0, maxScroll);
 
+            event.preventDefault();
             container.scrollTo({ left: nextScrollLeft, behavior: "auto" });
         };
 
-        const handlePointerUp = () => stopMiniScrollbarDragging();
+        const handlePointerEnd = (event: PointerEvent) => {
+            const dragState = stageHeaderDragRef.current;
 
-        window.addEventListener("pointermove", handlePointerMove);
-        window.addEventListener("pointerup", handlePointerUp);
-        window.addEventListener("pointercancel", handlePointerUp);
+            if (!dragState || event.pointerId === dragState.pointerId) {
+                stopStageHeaderDragging();
+            }
+        };
+
+        window.addEventListener("pointermove", handlePointerMove, { passive: false });
+        window.addEventListener("pointerup", handlePointerEnd);
+        window.addEventListener("pointercancel", handlePointerEnd);
 
         return () => {
             window.removeEventListener("pointermove", handlePointerMove);
-            window.removeEventListener("pointerup", handlePointerUp);
-            window.removeEventListener("pointercancel", handlePointerUp);
+            window.removeEventListener("pointerup", handlePointerEnd);
+            window.removeEventListener("pointercancel", handlePointerEnd);
         };
-    }, [horizontalScrollState.maxScroll, isMiniScrollbarDragging, miniScrollbarThumbWidth, stopMiniScrollbarDragging]);
+    }, [isStageHeaderDragging, stopStageHeaderDragging]);
 
-    const handleMiniScrollbarThumbPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-        if (!canUseMiniScrollbar) return;
+    const handleStageHeaderPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        const container = scrollContainerRef.current;
+        if (!container || event.button !== 0) return;
+
+        const maxScroll = getHorizontalMaxScroll(container);
+        if (maxScroll <= 0) return;
 
         event.preventDefault();
         event.stopPropagation();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
 
-        miniScrollbarDragRef.current = {
+        stageHeaderDragRef.current = {
+            pointerId: event.pointerId,
             startX: event.clientX,
-            startScrollLeft: horizontalScrollState.scrollLeft,
+            startScrollLeft: container.scrollLeft,
         };
-        setIsMiniScrollbarDragging(true);
-    }, [canUseMiniScrollbar, horizontalScrollState.scrollLeft]);
+        setIsStageHeaderDragging(true);
+    }, []);
+
+    const handleMiniScrollbarChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+        const container = scrollContainerRef.current;
+        if (!container) return;
+
+        container.scrollTo({
+            left: Number(event.target.value),
+            behavior: "auto",
+        });
+    }, []);
 
     const getDragTarget = useCallback((over: DragOverEvent["over"]) => {
         if (!over) return null;
@@ -1605,166 +1630,174 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                 />
             ) : (
                 <>
-            {/* Header */}
-            <div className="flex-shrink-0 p-4 border-b border-border bg-background">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => router.push("/pipelines")}
-                            className="h-9 w-9"
-                        >
-                            <ArrowLeft className="h-5 w-5" />
-                        </Button>
-                        <div>
-                            <h1 className="text-xl font-semibold text-foreground">
-                                {pipeline?.name || "Pipeline"}
-                            </h1>
-                            <p className="text-sm text-muted-foreground">
-                                {totalLeadCount} ta lid | {stages.length} ta etap
-                                {!isAdmin && " | Faqat mening lidlarim"}
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                        {/* Search */}
-                        <div className="relative w-72">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Ism, telefon bo'yicha qidirish..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="pl-9 bg-card border-border"
-                            />
-                            {searchQuery && (
+                    {/* Header */}
+                    <div className="flex-shrink-0 p-4 border-b border-border bg-background">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
-                                    onClick={() => setSearchQuery("")}
+                                    onClick={() => router.push("/pipelines")}
+                                    className="h-9 w-9"
                                 >
-                                    <X className="h-3 w-3" />
+                                    <ArrowLeft className="h-5 w-5" />
                                 </Button>
-                            )}
-                        </div>
+                                <div>
+                                    <h1 className="text-xl font-semibold text-foreground">
+                                        {pipeline?.name || "Pipeline"}
+                                    </h1>
+                                    <p className="text-sm text-muted-foreground">
+                                        {totalLeadCount} ta lid | {stages.length} ta etap
+                                        {!isAdmin && " | Faqat mening lidlarim"}
+                                    </p>
+                                </div>
+                            </div>
 
-                        {/* Add Stage Button (Admin only) */}
-                        {isAdmin && (
-                            <>
-                                <Button
-                                    variant="outline"
-                                    onClick={() => setIsAutomationSettingsOpen(true)}
-                                    className="border-border bg-card text-foreground hover:bg-accent"
-                                >
-                                    <Settings2 className="h-4 w-4 mr-2" />
-                                    Sozlash
-                                </Button>
-                                <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
-                                    <Plus className="h-4 w-4" />
-                                </Button>
-                            </>
+                            <div className="flex items-center gap-3">
+                                {/* Search */}
+                                <div className="relative w-72">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        placeholder="Ism, telefon bo'yicha qidirish..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="pl-9 bg-card border-border"
+                                    />
+                                    {searchQuery && (
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
+                                            onClick={() => setSearchQuery("")}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </Button>
+                                    )}
+                                </div>
+
+                                {/* Add Stage Button (Admin only) */}
+                                {isAdmin && (
+                                    <>
+                                        <Button
+                                            variant="outline"
+                                            onClick={() => setIsAutomationSettingsOpen(true)}
+                                            className="border-border bg-card text-foreground hover:bg-accent"
+                                        >
+                                            <Settings2 className="h-4 w-4 mr-2" />
+                                            Sozlash
+                                        </Button>
+                                        <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
+                                            <Plus className="h-4 w-4" />
+                                        </Button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Kanban Board */}
+                    <div ref={scrollContainerRef} className="flex-1 overflow-x-auto overflow-y-hidden p-4">
+                        {stagesLoading ? (
+                            <div className="flex items-center justify-center h-full">
+                                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                            </div>
+                        ) : stages.length === 0 ? (
+                            <div className="flex items-center justify-center h-full">
+                                <div className="text-center">
+                                    <p className="text-lg font-medium text-foreground mb-2">
+                                        Hali etap yo&apos;q
+                                    </p>
+                                    <p className="text-muted-foreground mb-4">
+                                        Lidlarni boshqarish uchun etap yaratish
+                                    </p>
+                                    {isAdmin && (
+                                        <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
+                                            <Plus className="h-4 w-4 mr-2" />
+                                            Birinchi etap yaratish
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        ) : (
+                            <DndContext
+                                sensors={sensors}
+                                collisionDetection={closestCorners}
+                                onDragStart={handleDragStart}
+                                onDragOver={handleDragOver}
+                                onDragCancel={handleDragCancel}
+                                onDragEnd={handleDragEnd}
+                            >
+                                <div className="flex gap-3 h-full pb-4">
+                                    {stages.map((stage) => (
+                                        <StageColumn
+                                            key={stage.id}
+                                            stage={stage}
+                                            pipelineId={pipelineId}
+                                            employeeId={employeeId}
+                                            searchQuery={debouncedSearch}
+                                            isAdmin={isAdmin}
+                                            onCreateLead={handleOpenCreateLead}
+                                            onEditStage={setEditingStage}
+                                            onAddTrigger={handleOpenAddTrigger}
+                                            onDeleteStage={handleDeleteStage}
+                                            onLeadClick={handleLeadClick}
+                                            movingLeadId={movingLeadId}
+                                            activeLead={activeLead}
+                                            dragOverStageId={dragOverStageId}
+                                            dragOverLeadId={dragOverLeadId}
+                                            dragOverPlacement={dragOverPlacement}
+                                            canDragStageHeader={stages.length > 1}
+                                            isStageHeaderDragging={isStageHeaderDragging}
+                                            onStageHeaderPointerDown={handleStageHeaderPointerDown}
+                                            onTotalCountChange={handleStageTotalCountChange}
+                                            onVisibleLeadsChange={handleVisibleLeadsChange}
+                                        />
+                                    ))}
+                                </div>
+
+                                {/* Drag Overlay */}
+                                <DragOverlay>
+                                    {activeLead && <LeadCard lead={activeLead} isDragOverlay />}
+                                </DragOverlay>
+                            </DndContext>
                         )}
                     </div>
-                </div>
-            </div>
 
-            {/* Kanban Board */}
-            <div ref={scrollContainerRef} className="flex-1 overflow-x-auto overflow-y-hidden p-4">
-                {stagesLoading ? (
-                    <div className="flex items-center justify-center h-full">
-                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    </div>
-                ) : stages.length === 0 ? (
-                    <div className="flex items-center justify-center h-full">
-                        <div className="text-center">
-                            <p className="text-lg font-medium text-foreground mb-2">
-                                Hali etap yo&apos;q
-                            </p>
-                            <p className="text-muted-foreground mb-4">
-                                Lidlarni boshqarish uchun etap yaratish
-                            </p>
-                            {isAdmin && (
-                                <Button onClick={() => setIsAddStageOpen(true)} className="btn-primary">
-                                    <Plus className="h-4 w-4 mr-2" />
-                                    Birinchi etap yaratish
-                                </Button>
-                            )}
-                        </div>
-                    </div>
-                ) : (
-                    <DndContext
-                        sensors={sensors}
-                        collisionDetection={closestCorners}
-                        onDragStart={handleDragStart}
-                        onDragOver={handleDragOver}
-                        onDragCancel={handleDragCancel}
-                        onDragEnd={handleDragEnd}
-                    >
-                        <div className="flex gap-3 h-full pb-4">
-                            {stages.map((stage) => (
-                                <StageColumn
-                                    key={stage.id}
-                                    stage={stage}
-                                    pipelineId={pipelineId}
-                                    employeeId={employeeId}
-                                    searchQuery={debouncedSearch}
-                                    isAdmin={isAdmin}
-                                    onCreateLead={handleOpenCreateLead}
-                                    onEditStage={setEditingStage}
-                                    onAddTrigger={handleOpenAddTrigger}
-                                    onDeleteStage={handleDeleteStage}
-                                    onLeadClick={handleLeadClick}
-                                    movingLeadId={movingLeadId}
-                                    activeLead={activeLead}
-                                    dragOverStageId={dragOverStageId}
-                                    dragOverLeadId={dragOverLeadId}
-                                    dragOverPlacement={dragOverPlacement}
-                                    onTotalCountChange={handleStageTotalCountChange}
-                                    onVisibleLeadsChange={handleVisibleLeadsChange}
-                                />
-                            ))}
-                        </div>
-
-                        {/* Drag Overlay */}
-                        <DragOverlay>
-                            {activeLead && <LeadCard lead={activeLead} isDragOverlay />}
-                        </DragOverlay>
-                    </DndContext>
-                )}
-            </div>
-
-            {/* Mini Horizontal Scrollbar */}
-            {stages.length > 0 && (
-                <div className="fixed bottom-6 right-6 z-50">
-                    <div
-                        ref={miniScrollbarTrackRef}
-                        onPointerDown={handleMiniScrollbarTrackPointerDown}
-                        className={`relative h-12 w-52 overflow-hidden rounded-lg border border-green-400/40 bg-[#1d1d1d] px-1.5 py-2 transition-colors ${canUseMiniScrollbar ? "cursor-pointer" : "cursor-default"
-                            }`}
-                    >
-                        <div className="pointer-events-none absolute inset-[6px] flex gap-1">
-                            {miniScrollbarSegments.map((segmentId, index) => (
-                                <div
-                                    key={`${segmentId}-${index}`}
-                                    className="flex-1 rounded-[4px] bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                                />
-                            ))}
-                        </div>
+                    {/* Mini Horizontal Scrollbar */}
+                    <div className="fixed bottom-6 right-6 z-50">
                         <div
-                            data-drag-thumb="true"
-                            onPointerDown={handleMiniScrollbarThumbPointerDown}
-                            className={`absolute inset-y-1.5 left-1.5 border rounded border-white/5 bg-green-300/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_6px_14px_rgba(15,23,42,0.3)] transition-[background-color,opacity] ${canUseMiniScrollbar ? "cursor-grab active:cursor-grabbing" : "opacity-50"
-                                } ${isMiniScrollbarDragging ? "bg-green-300/50" : ""}`}
-                            style={{
-                                width: miniScrollbarThumbWidth,
-                                transform: `translateX(${miniScrollbarThumbOffset}px)`,
-                            }}
-                        />
+                            className="relative h-10 w-40 select-none rounded-[4px] border border-emerald-400/70 bg-[#10211e] p-1 shadow-lg"
+                            title="Etaplar bo'yicha surish"
+                        >
+
+                            <div className="absolute inset-1 flex gap-1">
+                                {miniScrollbarSegments.map((segmentId, index) => (
+                                    <div
+                                        key={`${segmentId}-${index}`}
+                                        className="min-w-1 flex-1 rounded-[2px] bg-emerald-200/20"
+                                    />
+                                ))}
+                            </div>
+                            <div
+                                className="absolute inset-y-1 rounded-[3px] border border-emerald-300/70 bg-emerald-400/25 shadow-[0_0_10px_rgba(16,185,129,0.24)]"
+                                style={{
+                                    left: `${miniScrollbarThumbLeftPercent}2%`,
+                                    width: `${miniScrollbarThumbWidthPercent}%`,
+                                }}
+                            />
+                            <input
+                                type="range"
+                                min={0}
+                                max={horizontalScrollState.maxScroll}
+                                value={miniScrollbarValue}
+                                onChange={handleMiniScrollbarChange}
+                                onPointerDown={() => updateHorizontalScrollState()}
+                                aria-label="Etaplar bo'yicha gorizontal surish"
+                                className="absolute inset-0 h-full w-full cursor-grab opacity-0"
+                                style={{ accentColor: "var(--primary)" }}
+                            />
+                        </div>
                     </div>
-                </div>
-            )}
                 </>
             )}
 

@@ -79,17 +79,17 @@ export interface DashboardEmployeeScope {
     participantIds?: string[];
 }
 
-type DateRangeQuery<T> = {
-    gte: (column: string, value: string) => T;
-    lte: (column: string, value: string) => T;
+type DateRangeQuery = {
+    gte: (column: string, value: string) => unknown;
+    lte: (column: string, value: string) => unknown;
 };
 
-type EmployeeScopeQuery<T> = {
-    eq: (column: string, value: string) => T;
+type EmployeeScopeQuery = {
+    eq: (column: string, value: string) => unknown;
 };
 
-type OperatorFilterQuery<T> = {
-    in: (column: string, values: string[]) => T;
+type OperatorFilterQuery = {
+    in: (column: string, values: string[]) => unknown;
 };
 
 const dashboardKeys = {
@@ -131,20 +131,20 @@ function normalizeTextValues(values: Array<string | null | undefined>) {
 }
 
 // Sana filtri qo'llash helper
-function applyDateRange<T extends DateRangeQuery<T>>(query: T, dateRange?: DashboardDateRange, dateField = "created_at") {
+function applyDateRange<T extends DateRangeQuery>(query: T, dateRange?: DashboardDateRange, dateField = "created_at"): T {
     if (!dateRange) return query;
-    query = query.gte(dateField, `${dateRange.startDate}T00:00:00.000Z`);
-    query = query.lte(dateField, `${dateRange.endDate}T23:59:59.999Z`);
+    query = query.gte(dateField, `${dateRange.startDate}T00:00:00.000Z`) as T;
+    query = query.lte(dateField, `${dateRange.endDate}T23:59:59.999Z`) as T;
     return query;
 }
 
-function applyEmployeeScope<T extends EmployeeScopeQuery<T>>(query: T, employeeId?: string) {
-    return employeeId ? query.eq("employee_id", employeeId) : query;
+function applyEmployeeScope<T extends EmployeeScopeQuery>(query: T, employeeId?: string): T {
+    return employeeId ? query.eq("employee_id", employeeId) as T : query;
 }
 
-function applyCallOperatorFilter<T extends OperatorFilterQuery<T>>(query: T, operatorIds: string[]) {
+function applyCallOperatorFilter<T extends OperatorFilterQuery>(query: T, operatorIds: string[]): T {
     const normalizedOperatorIds = normalizeTextValues(operatorIds);
-    return normalizedOperatorIds.length > 0 ? query.in("operator_id", normalizedOperatorIds) : query;
+    return normalizedOperatorIds.length > 0 ? query.in("operator_id", normalizedOperatorIds) as T : query;
 }
 
 function getScopedParticipantIds(scope?: DashboardEmployeeScope) {

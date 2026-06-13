@@ -21,6 +21,7 @@ import {
     RefreshCw,
     Users,
     Eye,
+    Icon,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -170,7 +171,7 @@ export default function PipelinesPage() {
                             Filial tanlanmagan
                         </h2>
                         <p className="text-muted-foreground">
-                            Pipelinelarni ko'rish uchun avval sidebar dan filial tanlang.
+                            Voronka ko'rish uchun avval sidebar dan filial tanlang.
                         </p>
                     </CardContent>
                 </Card>
@@ -198,7 +199,7 @@ export default function PipelinesPage() {
                     <div className="relative max-w-md">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
-                            placeholder="Pipeline qidirish..."
+                            placeholder="Voronka qidirish..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="pl-10 bg-card border-border text-foreground placeholder:text-muted-foreground"
@@ -217,52 +218,32 @@ export default function PipelinesPage() {
                             <GitBranch className="h-6 w-6 text-muted-foreground" />
                         </div>
                         <h3 className="text-lg font-medium text-foreground mb-1">
-                            {searchQuery ? "Pipeline topilmadi" : "Hozircha pipeline yo'q"}
+                            {searchQuery ? "Voronka topilmadi" : "Hozircha voronka yo'q"}
                         </h3>
                         <p className="text-muted-foreground">
                             {searchQuery
                                 ? "Boshqa so'z bilan qidiring"
-                                : `${selectedBranch?.name} filialida hali pipeline yaratilmagan`}
+                                : `${selectedBranch?.name} filialida hali voronka yaratilmagan`}
                         </p>
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredPipelines.map((pipeline) => (
-                            <Card
+                            <div
                                 key={pipeline.id}
-                                className="border-border bg-card hover:border-primary/30 transition-all cursor-pointer group"
+                                className="border-border bg-card hover:border-primary/30 transition-all cursor-pointer group py-4 rounded-lg border"
                                 onClick={() => handleOpenPipeline(pipeline.id)}
                             >
-                                <CardContent className="p-5">
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div className="p-2 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-colors">
-                                            <GitBranch className="h-5 w-5 text-primary" />
-                                        </div>
-                                        {getStatusBadge(pipeline.status)}
+                                <div className="px-4 flex items-center gap-4">
+                                    <div className="p-2 rounded-md bg-accent group-hover:bg-primary/10 transition-colors">
+                                        <GitBranch className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
                                     </div>
-                                    <h3 className="text-lg font-semibold text-card-foreground mb-1">
+                                    <h3 className="text-lg font-semibold text-card-foreground ">
                                         {pipeline.name}
                                     </h3>
-                                    <p className="text-sm text-muted-foreground mb-4">
-                                        {pipeline.description || "Pipelineni ochish uchun bosing"}
-                                    </p>
-                                    <div className="flex items-center justify-between pt-3 border-t border-border">
-                                        <span className="text-xs text-muted-foreground">
-                                            {pipeline.created_at
-                                                ? new Date(pipeline.created_at).toLocaleDateString("uz-UZ")
-                                                : ""}
-                                        </span>
-                                        <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="text-primary hover:text-primary hover:bg-primary/10"
-                                        >
-                                            <Eye className="h-4 w-4 mr-1" />
-                                            Ochish
-                                        </Button>
-                                    </div>
-                                </CardContent>
-                            </Card>
+
+                                </div>
+                            </div>
                         ))}
                     </div>
                 )}
@@ -290,7 +271,7 @@ export default function PipelinesPage() {
                         <div className="relative max-w-md">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
-                                placeholder="Pipeline qidirish..."
+                                placeholder="Voronka qidirish..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 className="pl-10 bg-card border-border text-foreground placeholder:text-muted-foreground"

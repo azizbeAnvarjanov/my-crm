@@ -157,7 +157,7 @@ function SidebarToggleButton() {
             variant="ghost"
             size="icon"
             onClick={toggleSidebar}
-            className="absolute -right-3 top-6 z-50 h-6 w-6 rounded-full border border-border bg-card shadow-lg hover:bg-accent transition-all duration-200"
+            className="absolute -right-3 top-6 z-50 h-6 w-6 rounded-lg border border-border bg-card shadow-lg hover:bg-accent transition-all duration-200"
         >
             {isExpanded ? (
                 <ChevronLeft className="h-3 w-3 text-foreground" />
@@ -492,9 +492,9 @@ const AppSidebarContent = React.memo(function AppSidebarContent({
                 {/* Footer */}
                 <SidebarFooter className="border-t border-sidebar-border p-2">
                     {/* Theme Toggle */}
-                    <div className="mb-2 flex justify-center">
+                    {/* <div className="mb-2 flex justify-center">
                         <ThemeToggle />
-                    </div>
+                    </div> */}
 
                     {/* User Profile */}
                     <DropdownMenu>

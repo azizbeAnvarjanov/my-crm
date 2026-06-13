@@ -48,8 +48,8 @@ export default function SettingsPage() {
                     <button
                         onClick={() => setTheme("light")}
                         className={`p-4 rounded-lg border-2 transition-all ${theme === "light"
-                                ? "border-primary bg-primary/5"
-                                : "border-border hover:border-primary/50"
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-primary/50"
                             }`}
                     >
                         <Sun className="h-6 w-6 mx-auto mb-2 text-yellow-500" />
@@ -58,8 +58,8 @@ export default function SettingsPage() {
                     <button
                         onClick={() => setTheme("dark")}
                         className={`p-4 rounded-lg border-2 transition-all ${theme === "dark"
-                                ? "border-primary bg-primary/5"
-                                : "border-border hover:border-primary/50"
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-primary/50"
                             }`}
                     >
                         <Moon className="h-6 w-6 mx-auto mb-2 text-blue-500" />
@@ -68,8 +68,8 @@ export default function SettingsPage() {
                     <button
                         onClick={() => setTheme("system")}
                         className={`p-4 rounded-lg border-2 transition-all ${theme === "system"
-                                ? "border-primary bg-primary/5"
-                                : "border-border hover:border-primary/50"
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-primary/50"
                             }`}
                     >
                         <Monitor className="h-6 w-6 mx-auto mb-2 text-muted-foreground" />
@@ -79,7 +79,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Notification Settings */}
-            <div className="bg-card border border-border rounded-xl p-6">
+            {/* <div className="bg-card border border-border rounded-xl p-6">
                 <div className="flex items-center gap-3 mb-6">
                     <div className="p-2 rounded-lg bg-primary/10">
                         <Bell className="h-5 w-5 text-primary" />
@@ -113,10 +113,10 @@ export default function SettingsPage() {
                         <Switch />
                     </div>
                 </div>
-            </div>
+            </div> */}
 
             {/* Language Settings */}
-            <div className="bg-card border border-border rounded-xl p-6">
+            {/* <div className="bg-card border border-border rounded-xl p-6">
                 <div className="flex items-center gap-3 mb-6">
                     <div className="p-2 rounded-lg bg-primary/10">
                         <Globe className="h-5 w-5 text-primary" />
@@ -135,10 +135,10 @@ export default function SettingsPage() {
                         <p className="text-lg font-medium text-foreground">🇷🇺 Русский</p>
                     </button>
                 </div>
-            </div>
+            </div> */}
 
             {/* Admin Settings */}
-            {isAdmin && (
+            {/* {isAdmin && (
                 <div className="bg-card border border-border rounded-xl p-6">
                     <div className="flex items-center gap-3 mb-6">
                         <div className="p-2 rounded-lg bg-purple-500/10">
@@ -174,7 +174,7 @@ export default function SettingsPage() {
                         </div>
                     </div>
                 </div>
-            )}
+            )} */}
 
             {/* Save Button */}
             <div className="flex justify-end">

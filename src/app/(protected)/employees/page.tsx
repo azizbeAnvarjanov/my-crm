@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
 import {
     Users,
     Search,
-    Plus,
     MoreHorizontal,
     Edit2,
     Shield,
@@ -60,6 +59,7 @@ const ALL_PAGES = [
     { path: "/pipelines", label: "Pipelines", category: "CRM" },
     { path: "/notes", label: "Mening eslatmalarim", category: "CRM" },
     { path: "/calls", label: "Qo'ng'iroqlar", category: "CRM" },
+    { path: "/missed-calls", label: "O'tkazib yuborilgan qo'ng'iroqlar", category: "Analitika" },
     { path: "/calls-2", label: "Calls 2", category: "Analitika" },
     { path: "/calls-stats", label: "Calls Stats", category: "Analitika" },
     { path: "/leads", label: "Yangi kelib tushgan lidlar", category: "CRM" },
@@ -74,7 +74,7 @@ const ALL_PAGES = [
 
 export default function EmployeesPage() {
     const { data: currentEmployee, isLoading: currentLoading } = useEmployee();
-    const supabase = createClient();
+    const [supabase] = useState(() => createClient());
 
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(true);
@@ -87,12 +87,7 @@ export default function EmployeesPage() {
 
     const isAdmin = currentEmployee?.role === "super-admin";
 
-    // Fetch employees
-    useEffect(() => {
-        fetchEmployees();
-    }, []);
-
-    const fetchEmployees = async () => {
+    const fetchEmployees = useCallback(async () => {
         setLoading(true);
         try {
             const { data, error } = await supabase
@@ -111,7 +106,22 @@ export default function EmployeesPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [supabase]);
+
+    // Fetch employees
+    useEffect(() => {
+        let mounted = true;
+
+        queueMicrotask(() => {
+            if (mounted) {
+                void fetchEmployees();
+            }
+        });
+
+        return () => {
+            mounted = false;
+        };
+    }, [fetchEmployees]);
 
     // Open edit access modal
     const handleEditAccess = (employee: Employee) => {
@@ -223,7 +233,7 @@ export default function EmployeesPage() {
                 <Card className="max-w-md">
                     <CardContent className="pt-6 text-center">
                         <Shield className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                        <h2 className="text-xl font-semibold mb-2">Ruxsat yo'q</h2>
+                        <h2 className="text-xl font-semibold mb-2">Ruxsat yo&apos;q</h2>
                         <p className="text-muted-foreground">
                             Bu sahifaga faqat super-admin kirishi mumkin.
                         </p>
@@ -306,9 +316,9 @@ export default function EmployeesPage() {
             {/* Employees List */}
             <Card>
                 <CardHeader>
-                    <CardTitle>Xodimlar ro'yxati</CardTitle>
+                    <CardTitle>Xodimlar ro&apos;yxati</CardTitle>
                     <CardDescription>
-                        Xodimning "Ruxsatlar" tugmasini bosib sahifa ruxsatlarini boshqaring
+                        Xodimning &quot;Ruxsatlar&quot; tugmasini bosib sahifa ruxsatlarini boshqaring
                     </CardDescription>
                 </CardHeader>
                 <CardContent>

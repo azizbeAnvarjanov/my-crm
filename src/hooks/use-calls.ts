@@ -740,6 +740,8 @@ export interface PaginatedCallsFilter {
     endDate?: string;
     participantIds?: string[];
     operatorIds?: string[];
+    answered?: boolean;
+    direction?: "inbound" | "outbound";
     page: number;
     pageSize: number;
     recordingsOnly?: boolean;
@@ -778,6 +780,16 @@ export async function fetchPaginatedCalls(
     } else {
         countQuery = applyCallParticipantFilter(countQuery, participantIds);
         dataQuery = applyCallParticipantFilter(dataQuery, participantIds);
+    }
+
+    if (typeof filter.answered === "boolean") {
+        countQuery = countQuery.eq("answered", filter.answered);
+        dataQuery = dataQuery.eq("answered", filter.answered);
+    }
+
+    if (filter.direction) {
+        countQuery = countQuery.eq("direction", filter.direction);
+        dataQuery = dataQuery.eq("direction", filter.direction);
     }
 
     if (filter.recordingsOnly) {

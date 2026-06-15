@@ -13,6 +13,7 @@ import {
     Users,
     FileText,
     PhoneCall,
+    PhoneMissed,
     ChevronLeft,
     ChevronRight,
     LogOut,
@@ -101,6 +102,7 @@ const navItems: NavItem[] = [
     // Analitika
     // { title: "Qo'ng'iroqlar", href: "/calls", icon: PhoneCall, category: "analitika" },
     { title: "Qo'ng'iroqlar", href: "/calls", icon: PhoneCall, category: "analitika" },
+    { title: "O'tkazib yuborilgan", href: "/missed-calls", icon: PhoneMissed, category: "analitika" },
     { title: "Qo'ng'iroq statistikasi", href: "/calls-stats", icon: PhoneCall, category: "analitika" },
 
     // Sozlamalar

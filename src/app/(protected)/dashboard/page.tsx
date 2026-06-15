@@ -18,6 +18,14 @@ import { getEmployeeParticipantIds, useCallsEmployees } from "@/hooks/use-calls"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -137,6 +145,7 @@ export default function DashboardPage() {
         user_id: currentEmployee.user_id,
         employee_id: currentEmployee.employee_id,
       }),
+      operatorIds: currentEmployee.user_id ? [String(currentEmployee.user_id)] : [],
     };
   }, [currentEmployee, scopedEmployeeId]);
 
@@ -467,10 +476,10 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="flex w-full gap-4">
+      <div className="flex w-full flex-col gap-4 xl:flex-row">
 
         {/* Stats Cards Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-2 gap-3 md:gap-4 w-[40%]">
+        <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 md:gap-4 xl:w-[40%]">
           {showStatsSkeleton ? (
             Array.from({ length: 4 }).map((_, index) => (
               <StatsCardSkeleton key={index} />
@@ -657,7 +666,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Top Employees by Calls */}
-        <Card className="border-border/60 w-[60%]">
+        <Card className="w-full border-border/60 xl:flex-1">
           <CardHeader className="pb-3">
             <div className="flex items-start gap-2">
               <Trophy className="mt-0.5 h-5 w-5 text-amber-500" />
@@ -680,42 +689,43 @@ export default function DashboardPage() {
                 loading
               />
             ) : topCallers && topCallers.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-3">
-                {topCallers.map((caller, index) => (
-                  <div
-                    key={caller.employee_id}
-                    className="relative flex flex-row-reverse items-center justify-center rounded-xl border border-border/60 bg-card px-2 py-2 text-center transition-all duration-200 hover:border-primary/30 hover:shadow-md"
-                  >
-                    <div className="text-2xl font-bold text-purple-500 border w-12 h-10 flex items-center justify-center rounded-lg">
-                      {caller.call_count}
-                    </div>
-                    <div
-                      className={`absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${index === 0
-                        ? "bg-amber-500 text-white"
-                        : index === 1
-                          ? "bg-slate-400 text-white"
-                          : index === 2
-                            ? "bg-orange-500 text-white"
-                            : "bg-muted text-muted-foreground"
-                        }`}
-                    >
-                      {index + 1}
-                    </div>
-
-                    <div
-                      className="w-full overflow-hidden text-sm font-medium text-foreground"
-                      style={{
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                      }}
-                      title={caller.employee_name}
-                    >
-                      {caller.employee_name}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-16">#</TableHead>
+                    <TableHead>Xodim</TableHead>
+                    <TableHead className="text-right">Qo&apos;ng&apos;iroqlar</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {topCallers.map((caller, index) => (
+                    <TableRow key={caller.employee_id}>
+                      <TableCell>
+                        <span
+                          className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 text-xs font-semibold ${index === 0
+                            ? "bg-amber-500 text-white"
+                            : index === 1
+                              ? "bg-slate-400 text-white"
+                              : index === 2
+                                ? "bg-orange-500 text-white"
+                                : "bg-muted text-muted-foreground"
+                            }`}
+                        >
+                          {index + 1}
+                        </span>
+                      </TableCell>
+                      <TableCell className="max-w-[260px] truncate font-medium" title={caller.employee_name}>
+                        {caller.employee_name}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="font-semibold text-purple-500">
+                          {caller.call_count.toLocaleString()}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             ) : (
               <div className="flex flex-col items-center justify-center py-8 text-center">
                 <div className="p-3 rounded-full bg-muted mb-3">

@@ -41,6 +41,12 @@ export interface CreateStageAutomationTriggerInput {
     enabled?: boolean;
 }
 
+export interface DeleteStageAutomationTriggerInput {
+    id: string | number;
+    stage_id: string | number;
+    pipeline_id: string;
+}
+
 export const stageAutomationKeys = {
     all: ["stageAutomationTriggers"] as const,
     byStage: (stageId: string | number) => [...stageAutomationKeys.all, "stage", String(stageId)] as const,
@@ -134,6 +140,30 @@ export function useCreateStageAutomationTrigger() {
 
             if (error) throw error;
             return data as StageAutomationTrigger;
+        },
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: stageAutomationKeys.all });
+            queryClient.invalidateQueries({ queryKey: stageAutomationKeys.byStage(data.stage_id) });
+            queryClient.invalidateQueries({ queryKey: stageAutomationKeys.byPipeline(data.pipeline_id) });
+        },
+    });
+}
+
+export function useDeleteStageAutomationTrigger() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (input: DeleteStageAutomationTriggerInput) => {
+            const supabase = createClient();
+            const triggerId = normalizeBigintId(input.id, "Trigger");
+
+            const { error } = await supabase
+                .from("stage_automation_triggers")
+                .delete()
+                .eq("id", triggerId);
+
+            if (error) throw error;
+            return input;
         },
         onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: stageAutomationKeys.all });

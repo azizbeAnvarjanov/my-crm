@@ -2,7 +2,6 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
-    applyCallParticipantFilter,
     getCallParticipantValues,
     getEmployeeParticipantIds,
 } from "@/hooks/use-calls";
@@ -77,6 +76,7 @@ export interface DashboardDateRange {
 export interface DashboardEmployeeScope {
     employeeId?: string;
     participantIds?: string[];
+    operatorIds?: string[];
 }
 
 type DateRangeQuery = {
@@ -89,7 +89,7 @@ type EmployeeScopeQuery = {
 };
 
 type OperatorFilterQuery = {
-    in: (column: string, values: string[]) => unknown;
+    in: (column: string, values: Array<string | number>) => unknown;
 };
 
 const dashboardKeys = {
@@ -109,6 +109,7 @@ const dashboardKeys = {
             dateRange?.endDate,
             scope?.employeeId,
             scope?.participantIds?.join(","),
+            scope?.operatorIds?.join(","),
         ] as const,
     leadsByStage: (pipelineId?: string, employeeId?: string) =>
         [...dashboardKeys.all, "leads-by-stage", pipelineId, employeeId] as const,
@@ -130,6 +131,31 @@ function normalizeTextValues(values: Array<string | null | undefined>) {
     );
 }
 
+function normalizeFilterValues(values: Array<string | number | null | undefined>) {
+    const seen = new Set<string>();
+    const result: Array<string | number> = [];
+
+    for (const value of values) {
+        if (value == null) continue;
+
+        const normalizedValue = String(value).trim();
+        if (!normalizedValue || seen.has(normalizedValue)) continue;
+
+        seen.add(normalizedValue);
+        result.push(typeof value === "number" ? value : normalizedValue);
+    }
+
+    return result;
+}
+
+function intersectFilterValues(
+    left: Array<string | number>,
+    right: Array<string | number>,
+) {
+    const rightValues = new Set(right.map((value) => String(value).trim()));
+    return left.filter((value) => rightValues.has(String(value).trim()));
+}
+
 // Sana filtri qo'llash helper
 function applyDateRange<T extends DateRangeQuery>(query: T, dateRange?: DashboardDateRange, dateField = "created_at"): T {
     if (!dateRange) return query;
@@ -147,8 +173,15 @@ function applyCallOperatorFilter<T extends OperatorFilterQuery>(query: T, operat
     return normalizedOperatorIds.length > 0 ? query.in("operator_id", normalizedOperatorIds) as T : query;
 }
 
-function getScopedParticipantIds(scope?: DashboardEmployeeScope) {
-    return normalizeTextValues(scope?.participantIds ?? []);
+function applyTaskEmployeeFilter<T extends OperatorFilterQuery>(query: T, employeeIds: Array<string | number>): T {
+    const normalizedEmployeeIds = normalizeFilterValues(employeeIds);
+    return normalizedEmployeeIds.length > 0 ? query.in("employee_id", normalizedEmployeeIds) as T : query;
+}
+
+function getScopedOperatorIds(scope?: DashboardEmployeeScope) {
+    if (!scope) return null;
+
+    return normalizeTextValues(scope?.operatorIds ?? scope?.participantIds ?? []);
 }
 
 function getTrendConfig(period: DashboardTrendPeriod) {
@@ -265,6 +298,21 @@ async function getBranchEmployeeOperatorIds(
     return normalizeTextValues(rows.map((employee) => employee.user_id));
 }
 
+async function getBranchEmployeeIds(
+    supabase: ReturnType<typeof createClient>,
+    branchId: string,
+) {
+    const { data: employees, error: empError } = await supabase
+        .from("xodimlar")
+        .select("id")
+        .eq("branch_id", branchId);
+
+    if (empError) throw empError;
+
+    const rows = (employees ?? []) as Array<{ id: string | number | null }>;
+    return normalizeFilterValues(rows.map((employee) => employee.id));
+}
+
 // Asosiy dashboard statistikasi (pipeline + sana filtri bo'yicha)
 export function useDashboardStats(
     pipelineId?: string,
@@ -274,7 +322,7 @@ export function useDashboardStats(
 ) {
     const supabase = createClient();
     const scopedEmployeeId = scope?.employeeId;
-    const scopedParticipantIds = getScopedParticipantIds(scope);
+    const scopedOperatorIds = getScopedOperatorIds(scope);
 
     return useQuery({
         queryKey: dashboardKeys.stats(pipelineId, branchId, dateRange, scope),
@@ -312,6 +360,12 @@ export function useDashboardStats(
             yearAgo.setFullYear(yearAgo.getFullYear() - 1);
             const threeDaysLater = new Date(today);
             threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+            const [branchEmployeeIds, branchOperatorIds] = branchId
+                ? await Promise.all([
+                    getBranchEmployeeIds(supabase, branchId),
+                    getBranchEmployeeOperatorIds(supabase, branchId),
+                ])
+                : [null, null] as const;
 
             // Leads statistikasi (pipeline bo'yicha — jami soni sana filtrisiz)
             let totalLeadsQuery = supabase.from("leads").select("*", { count: "exact", head: true });
@@ -373,6 +427,23 @@ export function useDashboardStats(
                 upcomingTasksQ = upcomingTasksQ.gte("date", dateRange.startDate).lte("date", dateRange.endDate);
             }
 
+            let activeTaskEmployeeIds = branchEmployeeIds;
+            if (scopedEmployeeId) {
+                activeTaskEmployeeIds = activeTaskEmployeeIds
+                    ? intersectFilterValues(activeTaskEmployeeIds, [scopedEmployeeId])
+                    : [scopedEmployeeId];
+            }
+
+            const hasEmptyBranchTaskScope = Boolean(branchId && activeTaskEmployeeIds?.length === 0);
+            if (!hasEmptyBranchTaskScope && activeTaskEmployeeIds?.length) {
+                totalTasksQ = applyTaskEmployeeFilter(totalTasksQ, activeTaskEmployeeIds);
+                completedTasksQ = applyTaskEmployeeFilter(completedTasksQ, activeTaskEmployeeIds);
+                pendingTasksQ = applyTaskEmployeeFilter(pendingTasksQ, activeTaskEmployeeIds);
+                overdueTasksQ = applyTaskEmployeeFilter(overdueTasksQ, activeTaskEmployeeIds);
+                todayTasksQ = applyTaskEmployeeFilter(todayTasksQ, activeTaskEmployeeIds);
+                upcomingTasksQ = applyTaskEmployeeFilter(upcomingTasksQ, activeTaskEmployeeIds);
+            }
+
             if (scopedEmployeeId) {
                 totalTasksQ = applyEmployeeScope(totalTasksQ, scopedEmployeeId);
                 completedTasksQ = applyEmployeeScope(completedTasksQ, scopedEmployeeId);
@@ -393,10 +464,18 @@ export function useDashboardStats(
                 callsWeekQ = applyDateRange(callsWeekQ, dateRange, "called_at");
             }
 
-            if (scopedParticipantIds.length > 0) {
-                totalCallsQ = applyCallParticipantFilter(totalCallsQ, scopedParticipantIds);
-                callsTodayQ = applyCallParticipantFilter(callsTodayQ, scopedParticipantIds);
-                callsWeekQ = applyCallParticipantFilter(callsWeekQ, scopedParticipantIds);
+            let activeCallOperatorIds = branchOperatorIds;
+            if (scopedOperatorIds) {
+                activeCallOperatorIds = activeCallOperatorIds
+                    ? intersectFilterValues(activeCallOperatorIds, scopedOperatorIds) as string[]
+                    : scopedOperatorIds;
+            }
+
+            const hasEmptyBranchCallScope = Boolean(branchId && activeCallOperatorIds?.length === 0);
+            if (!hasEmptyBranchCallScope && activeCallOperatorIds?.length) {
+                totalCallsQ = applyCallOperatorFilter(totalCallsQ, activeCallOperatorIds.map(String));
+                callsTodayQ = applyCallOperatorFilter(callsTodayQ, activeCallOperatorIds.map(String));
+                callsWeekQ = applyCallOperatorFilter(callsWeekQ, activeCallOperatorIds.map(String));
             }
 
             let unassignedLeadsQuery = supabase
@@ -436,15 +515,15 @@ export function useDashboardStats(
                 updatedTodayQuery,
                 updatedWeekQuery,
                 updatedMonthQuery,
-                totalTasksQ,
-                completedTasksQ,
-                pendingTasksQ,
-                overdueTasksQ,
-                todayTasksQ,
-                upcomingTasksQ,
-                totalCallsQ,
-                callsTodayQ,
-                callsWeekQ,
+                hasEmptyBranchTaskScope ? Promise.resolve({ count: 0 }) : totalTasksQ,
+                hasEmptyBranchTaskScope ? Promise.resolve({ count: 0 }) : completedTasksQ,
+                hasEmptyBranchTaskScope ? Promise.resolve({ count: 0 }) : pendingTasksQ,
+                hasEmptyBranchTaskScope ? Promise.resolve({ count: 0 }) : overdueTasksQ,
+                hasEmptyBranchTaskScope ? Promise.resolve({ count: 0 }) : todayTasksQ,
+                hasEmptyBranchTaskScope ? Promise.resolve({ count: 0 }) : upcomingTasksQ,
+                hasEmptyBranchCallScope ? Promise.resolve({ count: 0 }) : totalCallsQ,
+                hasEmptyBranchCallScope ? Promise.resolve({ count: 0 }) : callsTodayQ,
+                hasEmptyBranchCallScope ? Promise.resolve({ count: 0 }) : callsWeekQ,
                 unassignedLeadsQuery,
             ]);
 

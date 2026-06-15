@@ -13,7 +13,6 @@ export interface Form {
     status: boolean;
     utm: string | null;
     created_at?: string;
-    updated_at?: string;
     // Relations - Using column references returns single objects
     branch?: {
         id: string;
@@ -48,6 +47,16 @@ export interface PublicForm {
         id: string;
         name: string;
     };
+}
+
+export interface UpdateFormInput {
+    id: string;
+    name?: string;
+    branch_id?: string;
+    pipline_id?: string;
+    stage_id?: string;
+    status?: boolean;
+    utm?: string | null;
 }
 
 // Query keys
@@ -193,14 +202,28 @@ export function useUpdateForm() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ id, ...updates }: Partial<Form> & { id: string }) => {
+        mutationFn: async ({
+            id,
+            name,
+            branch_id,
+            pipline_id,
+            stage_id,
+            status,
+            utm,
+        }: UpdateFormInput) => {
             const supabase = createClient();
+            const updates: Omit<UpdateFormInput, "id"> = {};
+
+            if (name !== undefined) updates.name = name;
+            if (branch_id !== undefined) updates.branch_id = branch_id;
+            if (pipline_id !== undefined) updates.pipline_id = pipline_id;
+            if (stage_id !== undefined) updates.stage_id = stage_id;
+            if (status !== undefined) updates.status = status;
+            if (utm !== undefined) updates.utm = utm;
+
             const { data, error } = await supabase
                 .from("forms")
-                .update({
-                    ...updates,
-                    updated_at: new Date().toISOString(),
-                })
+                .update(updates)
                 .eq("id", id)
                 .select()
                 .single();

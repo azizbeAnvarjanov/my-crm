@@ -130,7 +130,7 @@ const branchColors = [
 const getBranchColor = (index: number) => branchColors[index % branchColors.length];
 
 function canSwitchBranches(role?: string | null) {
-    return role === "super-admin" || role === "manager";
+    return role === "super-admin" || role === "manager" || role === "operator";
 }
 
 function getRoleLabel(role?: string | null) {

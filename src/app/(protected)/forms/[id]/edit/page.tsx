@@ -65,16 +65,26 @@ export default function FormEditPage() {
 
     // Initialize form data when loaded
     useEffect(() => {
+        let cancelled = false;
+
         if (form) {
-            setEditedForm({
-                name: form.name,
-                pipline_id: form.pipline_id,
-                stage_id: form.stage_id,
-                utm: form.utm || "",
-                status: form.status,
+            queueMicrotask(() => {
+                if (cancelled) return;
+
+                setEditedForm({
+                    name: form.name,
+                    pipline_id: form.pipline_id,
+                    stage_id: form.stage_id,
+                    utm: form.utm || "",
+                    status: form.status,
+                });
+                setSelectedPipelineId(form.pipline_id);
             });
-            setSelectedPipelineId(form.pipline_id);
         }
+
+        return () => {
+            cancelled = true;
+        };
     }, [form]);
 
     // Handle pipeline change
@@ -140,7 +150,7 @@ export default function FormEditPage() {
                             <XCircle className="h-6 w-6 text-red-500" />
                         </div>
                         <h2 className="text-xl font-semibold text-card-foreground mb-2">
-                            Ruxsat yo'q
+                            Ruxsat yo&apos;q
                         </h2>
                         <p className="text-muted-foreground">
                             Bu sahifaga faqat admin kirishga ruxsat etilgan.
@@ -164,7 +174,7 @@ export default function FormEditPage() {
                             Forma topilmadi
                         </h2>
                         <p className="text-muted-foreground mb-4">
-                            Bu forma mavjud emas yoki o'chirilgan.
+                            Bu forma mavjud emas yoki o&apos;chirilgan.
                         </p>
                         <Button onClick={() => router.push("/forms")}>
                             Formalarga qaytish
@@ -367,7 +377,7 @@ export default function FormEditPage() {
                     {/* Form Preview Info */}
                     <Card className="border-border bg-card">
                         <CardHeader>
-                            <CardTitle className="text-lg">Ma'lumot</CardTitle>
+                            <CardTitle className="text-lg">Ma&apos;lumot</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div className="flex items-center justify-between">

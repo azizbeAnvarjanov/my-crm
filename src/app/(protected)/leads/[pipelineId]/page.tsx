@@ -92,6 +92,7 @@ import {
 import { taskKeys, useBranchEmployees } from "@/hooks/use-tasks";
 import {
     useCreateStageAutomationTrigger,
+    useDeleteStageAutomationTrigger,
     usePipelineStageAutomationTriggers,
     type StageAutomationTrigger,
     type StageAutomationActionType,
@@ -387,6 +388,8 @@ function StageAutomationSettingsBoard({
     onBack,
     onSave,
     onAddTrigger,
+    onDeleteTrigger,
+    deletingTriggerId,
 }: {
     pipelineName?: string;
     stages: Stage[];
@@ -396,6 +399,8 @@ function StageAutomationSettingsBoard({
     onBack: () => void;
     onSave: () => void;
     onAddTrigger: (stage: Stage) => void;
+    onDeleteTrigger: (trigger: StageAutomationTrigger) => void;
+    deletingTriggerId?: number | null;
 }) {
     return (
         <div className="h-full flex flex-col overflow-hidden bg-[#171717] text-white">
@@ -521,6 +526,21 @@ function StageAutomationSettingsBoard({
                                                                     : trigger.task_text}
                                                             </p>
                                                         </div>
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() => onDeleteTrigger(trigger)}
+                                                            disabled={deletingTriggerId === trigger.id}
+                                                            aria-label={`${trigger.name} triggerini o'chirish`}
+                                                            className="h-8 w-8 flex-shrink-0 rounded-full text-red-200 hover:bg-red-500/15 hover:text-red-100"
+                                                        >
+                                                            {deletingTriggerId === trigger.id ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <Trash2 className="h-4 w-4" />
+                                                            )}
+                                                        </Button>
                                                     </div>
                                                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-sky-100/70">
                                                         {trigger.action_type === "create_task" ? (
@@ -884,6 +904,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const moveLeadMutation = useMoveLead();
     const updateLeadMutation = useUpdateLead();
     const createStageAutomationTriggerMutation = useCreateStageAutomationTrigger();
+    const deleteStageAutomationTriggerMutation = useDeleteStageAutomationTrigger();
 
     const [isAutomationSettingsOpen, setIsAutomationSettingsOpen] = useState(false);
     const [activeLead, setActiveLead] = useState<Lead | null>(null);
@@ -901,6 +922,7 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
     const [stageTriggerTargetEmployeeId, setStageTriggerTargetEmployeeId] = useState("");
     const [stageTriggerEnabled, setStageTriggerEnabled] = useState(true);
     const [stageTriggerErrors, setStageTriggerErrors] = useState<{ name?: string; text?: string; delay?: string; targetEmployee?: string }>({});
+    const [deletingTriggerId, setDeletingTriggerId] = useState<number | null>(null);
     const [creatingLeadStage, setCreatingLeadStage] = useState<Stage | null>(null);
     const [newLeadName, setNewLeadName] = useState("");
     const [newLeadPhone, setNewLeadPhone] = useState(UZBEK_PHONE_PREFIX);
@@ -1402,6 +1424,24 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
         }
     };
 
+    const handleDeleteStageTrigger = async (trigger: StageAutomationTrigger) => {
+        if (!confirm(`"${trigger.name}" triggerini o'chirishni xohlaysizmi?`)) return;
+
+        setDeletingTriggerId(trigger.id);
+        try {
+            await deleteStageAutomationTriggerMutation.mutateAsync({
+                id: trigger.id,
+                stage_id: trigger.stage_id,
+                pipeline_id: trigger.pipeline_id,
+            });
+        } catch (error) {
+            console.error("Error deleting stage trigger:", error);
+            alert("Triggerni o'chirib bo'lmadi");
+        } finally {
+            setDeletingTriggerId(null);
+        }
+    };
+
     const handleCreateLead = async () => {
         const trimmedName = newLeadName.trim();
         const errors: { name?: string; phone?: string } = {};
@@ -1627,6 +1667,8 @@ export default function LeadsPage({ params }: { params: Promise<{ pipelineId: st
                     onBack={() => setIsAutomationSettingsOpen(false)}
                     onSave={() => setIsAutomationSettingsOpen(false)}
                     onAddTrigger={handleOpenAddTrigger}
+                    onDeleteTrigger={handleDeleteStageTrigger}
+                    deletingTriggerId={deletingTriggerId}
                 />
             ) : (
                 <>

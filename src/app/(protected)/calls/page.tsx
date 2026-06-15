@@ -6,6 +6,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
     ChevronLeft,
     ChevronRight,
+    Calendar,
     Clock,
     Download,
     Loader2,
@@ -17,6 +18,7 @@ import {
     Search,
     SkipBack,
     SkipForward,
+    User,
     Volume2,
     XCircle,
 } from "lucide-react";
@@ -46,26 +48,20 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { Slider } from "@/components/ui/slider";
+import { useBranch } from "@/components/app-sidebar";
 import { useEmployee } from "@/hooks/use-employee";
 import { createClient } from "@/lib/supabase/client";
 import {
     Call,
+    Employee as CallsEmployee,
     fetchPaginatedCalls,
     formatDuration,
     getCallStatusLabel,
-    getEmployeeParticipantIds,
+    useCallsEmployees,
 } from "@/hooks/use-calls";
 
 const PAGE_SIZE = 20;
 const EMPTY_CALLS: Call[] = [];
-
-type ManagerEmployee = {
-    id: string;
-    name: string;
-    role: string;
-    user_id: string | null;
-    employee_id: string | null;
-};
 
 function formatTime(seconds: number): string {
     const mins = Math.floor(seconds / 60);
@@ -253,54 +249,72 @@ function AudioPlayerDialog({
     );
 }
 
-export default function Calls2Page() {
+function getEmployeeOperatorId(employee: Pick<CallsEmployee, "user_id">): string | null {
+    const operatorId = employee.user_id?.trim();
+    return operatorId || null;
+}
+
+export default function CallsPage() {
     const searchParams = useSearchParams();
     const { data: currentEmployee, isLoading: employeeLoading } = useEmployee();
+    const { selectedBranch, loading: branchLoading } = useBranch();
+    const branchId = selectedBranch?.id ?? null;
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedEmployeeId, setSelectedEmployeeId] = useState(searchParams.get("employeeId") || "all");
+    const [startDate, setStartDate] = useState(searchParams.get("startDate") || "");
+    const [endDate, setEndDate] = useState(searchParams.get("endDate") || "");
     const [currentPage, setCurrentPage] = useState(1);
     const [selectedCall, setSelectedCall] = useState<Call | null>(null);
     const [playerOpen, setPlayerOpen] = useState(false);
 
     const isAdmin = currentEmployee?.role === "super-admin";
 
-    const { data: managers = [], isLoading: managersLoading } = useQuery({
-        queryKey: ["calls2-managers"],
-        queryFn: async () => {
-            const supabase = createClient();
-            const { data, error } = await supabase
-                .from("xodimlar")
-                .select("id, name, role, user_id, employee_id")
-                .eq("role", "manager")
-                .order("name", { ascending: true });
+    const { data: employees = [], isLoading: employeesLoading } = useCallsEmployees(branchId);
 
-            if (error) throw error;
-            return (data || []).map((employee) => ({
-                id: String(employee.id),
-                name: employee.name,
-                role: employee.role,
-                user_id: employee.user_id ? String(employee.user_id) : null,
-                employee_id: employee.employee_id ? String(employee.employee_id) : null,
-            })) as ManagerEmployee[];
-        },
-        enabled: isAdmin,
-    });
+    const activeSelectedEmployeeId = useMemo(() => {
+        if (selectedEmployeeId === "all") {
+            return "all";
+        }
+
+        return employees.some((employee) => employee.id === selectedEmployeeId)
+            ? selectedEmployeeId
+            : "all";
+    }, [employees, selectedEmployeeId]);
 
     const selectedEmployee = useMemo(
-        () => managers.find((employee) => employee.id === selectedEmployeeId) || null,
-        [managers, selectedEmployeeId]
+        () => employees.find((employee) => employee.id === activeSelectedEmployeeId) || null,
+        [employees, activeSelectedEmployeeId]
     );
 
-    const selectedParticipantIds = useMemo(
-        () =>
-            selectedEmployee
-                ? getEmployeeParticipantIds({
-                    id: selectedEmployee.id,
-                    user_id: selectedEmployee.user_id ?? undefined,
-                    employee_id: selectedEmployee.employee_id ?? undefined,
-                })
-                : [],
-        [selectedEmployee]
+    const selectedOperatorIds = useMemo(
+        () => {
+            const sourceEmployees = selectedEmployee ? [selectedEmployee] : employees;
+
+            return Array.from(
+                new Set(
+                    sourceEmployees
+                        .map(getEmployeeOperatorId)
+                        .filter((operatorId): operatorId is string => Boolean(operatorId))
+                )
+            );
+        },
+        [employees, selectedEmployee]
+    );
+
+    const employeeByOperatorId = useMemo(
+        () => {
+            const map = new Map<string, CallsEmployee>();
+
+            employees.forEach((employee) => {
+                const operatorId = getEmployeeOperatorId(employee);
+                if (operatorId) {
+                    map.set(operatorId, employee);
+                }
+            });
+
+            return map;
+        },
+        [employees]
     );
 
     const {
@@ -309,14 +323,24 @@ export default function Calls2Page() {
         refetch,
         isFetching,
     } = useQuery({
-        queryKey: ["calls-recordings", currentPage, selectedEmployeeId, selectedParticipantIds.join(",")],
+        queryKey: [
+            "calls",
+            branchId,
+            currentPage,
+            activeSelectedEmployeeId,
+            selectedOperatorIds.join(","),
+            startDate,
+            endDate,
+        ],
         queryFn: async () =>
             fetchPaginatedCalls(createClient(), {
-                participantIds: selectedParticipantIds,
+                operatorIds: selectedOperatorIds,
+                startDate: startDate || undefined,
+                endDate: endDate || undefined,
                 page: currentPage,
                 pageSize: PAGE_SIZE,
             }),
-        enabled: isAdmin,
+        enabled: Boolean(isAdmin && branchId && !employeesLoading),
         placeholderData: keepPreviousData,
     });
 
@@ -328,22 +352,49 @@ export default function Calls2Page() {
         if (!searchQuery.trim()) return recordings;
 
         const normalizedQuery = searchQuery.trim().toLowerCase();
-        return recordings.filter((call) =>
-            [
+        return recordings.filter((call) => {
+            const operatorName = call.operator_id
+                ? employeeByOperatorId.get(call.operator_id)?.name ?? ""
+                : "";
+
+            return [
                 call.phone,
                 call.caller || "",
                 call.callee || "",
                 call.operator_id || "",
-            ].some((value) => value.toLowerCase().includes(normalizedQuery))
-        );
-    }, [recordings, searchQuery]);
+                operatorName,
+            ].some((value) => value.toLowerCase().includes(normalizedQuery));
+        });
+    }, [recordings, searchQuery, employeeByOperatorId]);
+
+    const handleEmployeeSelect = (value: string) => {
+        setSelectedEmployeeId(value);
+        setCurrentPage(1);
+    };
+
+    const handleClearFilters = () => {
+        setSelectedEmployeeId("all");
+        setStartDate("");
+        setEndDate("");
+        setSearchQuery("");
+        setCurrentPage(1);
+    };
+
+    const getOperatorDisplayName = (operatorId: string | null) => {
+        if (!operatorId) return "-";
+        return employeeByOperatorId.get(operatorId)?.name ?? operatorId;
+    };
+
+    const hasActiveFilters = activeSelectedEmployeeId !== "all" || Boolean(startDate || endDate || searchQuery);
+
+    const callsLoading = employeeLoading || branchLoading || Boolean(isAdmin && branchId && employeesLoading);
 
     const handlePlayClick = (call: Call) => {
         setSelectedCall(call);
         setPlayerOpen(true);
     };
 
-    if (employeeLoading || managersLoading) {
+    if (callsLoading) {
         return (
             <div className="flex min-h-screen items-center justify-center">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -369,6 +420,24 @@ export default function Calls2Page() {
         );
     }
 
+    if (!branchId) {
+        return (
+            <div className="min-h-screen p-6 flex items-center justify-center">
+                <Card className="max-w-md border-border bg-card">
+                    <CardContent className="pt-6 text-center">
+                        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                            <Phone className="h-6 w-6 text-primary" />
+                        </div>
+                        <h2 className="mb-2 text-xl font-semibold text-card-foreground">Filial tanlang</h2>
+                        <p className="text-muted-foreground">
+                            Qo&apos;ng&apos;iroqlarni ko&apos;rish uchun chapdagi sidebar orqali filialni tanlang.
+                        </p>
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-screen space-y-6 p-6 lg:p-8">
             <div className="flex items-center gap-3">
@@ -376,9 +445,9 @@ export default function Calls2Page() {
                     <Phone className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                    <h1 className="text-2xl font-bold text-foreground">Calls 2</h1>
+                    <h1 className="text-2xl font-bold text-foreground">Qo&apos;ng&apos;iroqlar</h1>
                     <p className="text-sm text-muted-foreground">
-                        Calls table ichidan har sahifada {PAGE_SIZE} tadan qo&apos;ng&apos;iroq
+                        {selectedBranch?.name} filiali bo&apos;yicha har sahifada {PAGE_SIZE} tadan qo&apos;ng&apos;iroq
                     </p>
                 </div>
             </div>
@@ -387,27 +456,64 @@ export default function Calls2Page() {
                 <CardContent className="p-4">
                     <div className="flex flex-wrap items-end gap-4">
                         <div className="min-w-[240px] space-y-1.5">
-                            <label className="text-sm text-muted-foreground">Xodim</label>
+                            <label className="flex items-center gap-1 text-sm text-muted-foreground">
+                                <User className="h-3.5 w-3.5" />
+                                Xodim
+                            </label>
                             <Select
-                                value={selectedEmployeeId}
-                                onValueChange={(value) => {
-                                    setSelectedEmployeeId(value);
-                                    setCurrentPage(1);
-                                }}
+                                value={activeSelectedEmployeeId}
+                                onValueChange={handleEmployeeSelect}
                             >
                                 <SelectTrigger className="w-full bg-background border-border">
-                                    <SelectValue placeholder="Manager tanlang" />
+                                    <SelectValue placeholder="Xodim tanlang" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="all">Barchasi</SelectItem>
-                                    {managers
-                                        .map((employee) => (
-                                            <SelectItem key={employee.id} value={employee.id}>
-                                                {employee.name}
-                                            </SelectItem>
-                                        ))}
+                                    <SelectItem value="all">Barcha xodimlar</SelectItem>
+                                    {employees.map((employee) => (
+                                        <SelectItem
+                                            key={employee.id}
+                                            value={employee.id}
+                                            disabled={!getEmployeeOperatorId(employee)}
+                                        >
+                                            {employee.name}
+                                            {!getEmployeeOperatorId(employee) ? " (user_id yo'q)" : ""}
+                                        </SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="flex items-center gap-1 text-sm text-muted-foreground">
+                                <Calendar className="h-3.5 w-3.5" />
+                                Qaysi sanadan
+                            </label>
+                            <Input
+                                type="date"
+                                value={startDate}
+                                onChange={(event) => {
+                                    setStartDate(event.target.value);
+                                    setCurrentPage(1);
+                                }}
+                                className="w-40 bg-background border-border"
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="flex items-center gap-1 text-sm text-muted-foreground">
+                                <Calendar className="h-3.5 w-3.5" />
+                                Qaysi sanagacha
+                            </label>
+                            <Input
+                                type="date"
+                                value={endDate}
+                                min={startDate || undefined}
+                                onChange={(event) => {
+                                    setEndDate(event.target.value);
+                                    setCurrentPage(1);
+                                }}
+                                className="w-40 bg-background border-border"
+                            />
                         </div>
 
                         <div className="min-w-[240px] flex-1 space-y-1.5">
@@ -417,12 +523,20 @@ export default function Calls2Page() {
                             </label>
                             <Input
                                 type="text"
-                                placeholder="Telefon, caller, callee..."
+                                placeholder="Telefon, caller, operator..."
                                 value={searchQuery}
                                 onChange={(event) => setSearchQuery(event.target.value)}
                                 className="bg-background border-border"
                             />
                         </div>
+
+                        <Button
+                            onClick={handleClearFilters}
+                            variant="outline"
+                            disabled={!hasActiveFilters}
+                        >
+                            Tozalash
+                        </Button>
 
                         <Button onClick={() => refetch()} variant="outline" className="gap-2" disabled={isFetching}>
                             {isFetching ? (
@@ -440,7 +554,7 @@ export default function Calls2Page() {
                 <div className="flex justify-center py-16">
                     <div className="text-center">
                         <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-primary" />
-                        <p className="text-muted-foreground">Recordinglar yuklanmoqda...</p>
+                        <p className="text-muted-foreground">Qo&apos;ng&apos;iroqlar yuklanmoqda...</p>
                     </div>
                 </div>
             ) : filteredRecordings.length === 0 ? (
@@ -459,8 +573,8 @@ export default function Calls2Page() {
                         <div className="flex items-center justify-between border-b border-border p-4">
                             <h2 className="text-lg font-semibold text-foreground">
                                 {selectedEmployee
-                                    ? `${selectedEmployee.name} uchun ${totalCount} ta recording`
-                                    : `${totalCount} ta recording`}
+                                    ? `${selectedEmployee.name} uchun ${totalCount} ta qo'ng'iroq`
+                                    : `${selectedBranch?.name} filialida ${totalCount} ta qo'ng'iroq`}
                             </h2>
                         </div>
 
@@ -469,7 +583,7 @@ export default function Calls2Page() {
                                 <TableRow>
                                     <TableHead className="w-12">#</TableHead>
                                     <TableHead>Caller</TableHead>
-                                    <TableHead>Callee</TableHead>
+                                    <TableHead>Operator</TableHead>
                                     <TableHead>Telefon</TableHead>
                                     <TableHead>Sana</TableHead>
                                     <TableHead>Yo&rsquo;nalish</TableHead>
@@ -483,6 +597,8 @@ export default function Calls2Page() {
                                     const date = new Date(call.called_at);
                                     const isIncoming = call.direction === "incoming";
                                     const rowNumber = (currentPage - 1) * PAGE_SIZE + index + 1;
+                                    const operator = call.operator_id ? employeeByOperatorId.get(call.operator_id) : null;
+                                    const operatorName = getOperatorDisplayName(call.operator_id);
 
                                     return (
                                         <TableRow key={call.id} className="hover:bg-accent/50">
@@ -490,7 +606,12 @@ export default function Calls2Page() {
                                                 {rowNumber}
                                             </TableCell>
                                             <TableCell>{call.caller || "-"}</TableCell>
-                                            <TableCell>{call.callee || "-"}</TableCell>
+                                            <TableCell>
+                                                <div className="font-medium">{operatorName}</div>
+                                                {operator && call.operator_id ? (
+                                                    <div className="text-xs text-muted-foreground">{call.operator_id}</div>
+                                                ) : null}
+                                            </TableCell>
                                             <TableCell className="font-medium">{call.phone}</TableCell>
                                             <TableCell>
                                                 <div className="text-sm">
@@ -531,19 +652,31 @@ export default function Calls2Page() {
                                                         size="icon"
                                                         className="h-8 w-8 text-primary hover:bg-primary/10 hover:text-primary"
                                                         onClick={() => handlePlayClick(call)}
+                                                        disabled={!call.record_url}
                                                     >
                                                         <Play className="h-4 w-4" />
                                                     </Button>
-                                                    <Button
-                                                        asChild
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8"
-                                                    >
-                                                        <a href={call.record_url || "#"} target="_blank" rel="noreferrer">
+                                                    {call.record_url ? (
+                                                        <Button
+                                                            asChild
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-8 w-8"
+                                                        >
+                                                            <a href={call.record_url} target="_blank" rel="noreferrer">
+                                                                <Download className="h-4 w-4" />
+                                                            </a>
+                                                        </Button>
+                                                    ) : (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-8 w-8"
+                                                            disabled
+                                                        >
                                                             <Download className="h-4 w-4" />
-                                                        </a>
-                                                    </Button>
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </TableCell>
                                         </TableRow>

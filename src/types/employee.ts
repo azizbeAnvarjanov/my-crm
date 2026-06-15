@@ -6,7 +6,7 @@ export interface Employee {
     employee_id: string; // Auth user UUID
     name: string;
     email: string;
-    role: "super-admin" | "manager";
+    role: "super-admin" | "manager" | "operator";
     access: string[]; // Array of page paths this user can access
     department_id: string | null;
     branch_id: string | null;

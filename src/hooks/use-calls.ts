@@ -101,6 +101,10 @@ type ParticipantFilterQuery = {
     or: (filters: string) => unknown;
 };
 
+type OperatorFilterQuery = {
+    in: (column: string, values: string[]) => unknown;
+};
+
 const CALL_DATE_FIELD = "called_at";
 const INBOUND_DIRECTION = "inbound";
 const OUTBOUND_DIRECTION = "outbound";
@@ -254,6 +258,17 @@ export function applyCallParticipantFilter<T>(query: T, participantIds: string[]
     return filterableQuery.or(filters.join(",")) as T;
 }
 
+function applyCallOperatorFilter<T>(query: T, operatorIds: string[]): T {
+    const normalizedOperatorIds = normalizeParticipantIds(operatorIds);
+
+    if (normalizedOperatorIds.length === 0) {
+        return query;
+    }
+
+    const filterableQuery = query as T & OperatorFilterQuery;
+    return filterableQuery.in("operator_id", normalizedOperatorIds) as T;
+}
+
 function sumDurations(calls: Array<Pick<RawCallRow, "call_duration" | "dialog_duration">>) {
     return calls.reduce((sum, call) => sum + getDisplayDuration(call), 0);
 }
@@ -403,6 +418,138 @@ async function fetchCountStats(
     };
 }
 
+async function fetchOperatorCountStats(
+    supabase: ReturnType<typeof createClient>,
+    baseFilters: BaseFilters,
+    operatorIds: string[]
+): Promise<CallStats> {
+    const normalizedOperatorIds = normalizeParticipantIds(operatorIds);
+
+    if (normalizedOperatorIds.length === 0) {
+        return { ...EMPTY_STATS };
+    }
+
+    const buildCountQuery = (direction?: string, answered?: boolean) => {
+        let query = applyDateFilter(
+            applyCallOperatorFilter(
+                supabase.from("calls").select("*", { count: "exact", head: true }),
+                normalizedOperatorIds
+            ),
+            baseFilters
+        );
+
+        if (direction) {
+            query = query.eq("direction", direction);
+        }
+
+        if (typeof answered === "boolean") {
+            query = query.eq("answered", answered);
+        }
+
+        return query;
+    };
+
+    const [
+        totalRes,
+        answeredRes,
+        unansweredRes,
+        incomingRes,
+        incomingAnsweredRes,
+        outgoingRes,
+        outgoingAnsweredRes,
+    ] = await Promise.all([
+        buildCountQuery(),
+        buildCountQuery(undefined, true),
+        buildCountQuery(undefined, false),
+        buildCountQuery(INBOUND_DIRECTION),
+        buildCountQuery(INBOUND_DIRECTION, true),
+        buildCountQuery(OUTBOUND_DIRECTION),
+        buildCountQuery(OUTBOUND_DIRECTION, true),
+    ]);
+
+    const totalCalls = totalRes.count || 0;
+    const answeredCalls = answeredRes.count || 0;
+    const unansweredCalls = unansweredRes.count || 0;
+    const incomingTotal = incomingRes.count || 0;
+    const incomingAnswered = incomingAnsweredRes.count || 0;
+    const outgoingTotal = outgoingRes.count || 0;
+    const outgoingAnswered = outgoingAnsweredRes.count || 0;
+
+    let totalDuration = 0;
+    let incomingDuration = 0;
+    let outgoingDuration = 0;
+
+    if (answeredCalls > 0) {
+        const totalDurationQuery = applyDateFilter(
+            applyCallOperatorFilter(
+                supabase
+                    .from("calls")
+                    .select("call_duration, dialog_duration")
+                    .eq("answered", true),
+                normalizedOperatorIds
+            ),
+            baseFilters
+        );
+
+        const { data: totalDurationRows } = await totalDurationQuery;
+        totalDuration = sumDurations(totalDurationRows || []);
+
+        if (incomingAnswered > 0) {
+            const incomingDurationQuery = applyDateFilter(
+                applyCallOperatorFilter(
+                    supabase
+                        .from("calls")
+                        .select("call_duration, dialog_duration")
+                        .eq("answered", true)
+                        .eq("direction", INBOUND_DIRECTION),
+                    normalizedOperatorIds
+                ),
+                baseFilters
+            );
+
+            const { data: incomingDurationRows } = await incomingDurationQuery;
+            incomingDuration = sumDurations(incomingDurationRows || []);
+        }
+
+        if (outgoingAnswered > 0) {
+            const outgoingDurationQuery = applyDateFilter(
+                applyCallOperatorFilter(
+                    supabase
+                        .from("calls")
+                        .select("call_duration, dialog_duration")
+                        .eq("answered", true)
+                        .eq("direction", OUTBOUND_DIRECTION),
+                    normalizedOperatorIds
+                ),
+                baseFilters
+            );
+
+            const { data: outgoingDurationRows } = await outgoingDurationQuery;
+            outgoingDuration = sumDurations(outgoingDurationRows || []);
+        }
+    }
+
+    return {
+        totalCalls,
+        answeredCalls,
+        unansweredCalls,
+        totalDuration,
+        avgDuration: answeredCalls > 0 ? Math.round(totalDuration / answeredCalls) : 0,
+        incoming: {
+            total: incomingTotal,
+            answered: incomingAnswered,
+            unanswered: incomingTotal - incomingAnswered,
+            totalDuration: incomingDuration,
+        },
+        outgoing: {
+            total: outgoingTotal,
+            answered: outgoingAnswered,
+            unanswered: outgoingTotal - outgoingAnswered,
+            totalDuration: outgoingDuration,
+        },
+    };
+}
+
 export function useCallsEmployees(branchId: string | null) {
     return useQuery({
         queryKey: [...callsKeys.employees, branchId],
@@ -487,21 +634,24 @@ export function useCallsStats(filter: CallsFilter, employees: Employee[] = []) {
 
 export function useCallsStatsByEmployee(filter: CallsFilter, employees: Employee[]) {
     return useQuery({
-        queryKey: [...callsKeys.byEmployee(filter), employees.map((employee) => employee.id).join(",")],
+        queryKey: [
+            ...callsKeys.byEmployee(filter),
+            employees.map((employee) => `${employee.id}:${employee.user_id ?? ""}`).join(","),
+        ],
         queryFn: async () => {
             const supabase = createClient();
             const baseFilters = getDateRangeFilters(filter);
 
             const statsByEmployee: EmployeeCallStats[] = await Promise.all(
                 employees.map(async (employee) => {
-                    const participantIds = getEmployeeParticipantIds(employee);
-                    const stats = await fetchCountStats(supabase, baseFilters, participantIds);
+                    const operatorIds = normalizeParticipantIds(employee.user_id ? [employee.user_id] : []);
+                    const stats = await fetchOperatorCountStats(supabase, baseFilters, operatorIds);
 
                     return {
                         ...stats,
                         employeeId: employee.id,
                         employeeName: employee.name,
-                        participantIds,
+                        participantIds: operatorIds,
                     };
                 })
             );
@@ -589,6 +739,7 @@ export interface PaginatedCallsFilter {
     startDate?: string;
     endDate?: string;
     participantIds?: string[];
+    operatorIds?: string[];
     page: number;
     pageSize: number;
     recordingsOnly?: boolean;
@@ -600,6 +751,14 @@ export async function fetchPaginatedCalls(
 ): Promise<CallRecordingsResult> {
     const baseFilters = getDateRangeFilters(filter);
     const participantIds = filter.participantIds ?? [];
+    const operatorIds = filter.operatorIds ? normalizeParticipantIds(filter.operatorIds) : null;
+
+    if (operatorIds && operatorIds.length === 0) {
+        return {
+            data: [],
+            totalCount: 0,
+        };
+    }
 
     let countQuery = supabase
         .from("calls")
@@ -610,8 +769,16 @@ export async function fetchPaginatedCalls(
         .select("*")
         .order(CALL_DATE_FIELD, { ascending: false });
 
-    countQuery = applyDateFilter(applyCallParticipantFilter(countQuery, participantIds), baseFilters);
-    dataQuery = applyDateFilter(applyCallParticipantFilter(dataQuery, participantIds), baseFilters);
+    countQuery = applyDateFilter(countQuery, baseFilters);
+    dataQuery = applyDateFilter(dataQuery, baseFilters);
+
+    if (operatorIds) {
+        countQuery = applyCallOperatorFilter(countQuery, operatorIds);
+        dataQuery = applyCallOperatorFilter(dataQuery, operatorIds);
+    } else {
+        countQuery = applyCallParticipantFilter(countQuery, participantIds);
+        dataQuery = applyCallParticipantFilter(dataQuery, participantIds);
+    }
 
     if (filter.recordingsOnly) {
         countQuery = countQuery.not("download_url", "is", null);

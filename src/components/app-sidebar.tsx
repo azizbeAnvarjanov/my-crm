@@ -129,6 +129,16 @@ const branchColors = [
 
 const getBranchColor = (index: number) => branchColors[index % branchColors.length];
 
+function canSwitchBranches(role?: string | null) {
+    return role === "super-admin" || role === "manager";
+}
+
+function getRoleLabel(role?: string | null) {
+    if (role === "super-admin") return "Super Admin";
+    if (role === "operator") return "Operator";
+    return "Manager";
+}
+
 // Branch Context
 export const BranchContext = React.createContext<{
     selectedBranch: Branch | null;
@@ -343,6 +353,8 @@ const AppSidebarContent = React.memo(function AppSidebarContent({
 
     const selectedBranchIndex = branches.findIndex((b) => b.id === selectedBranch?.id);
     const selectedColor = selectedBranchIndex >= 0 ? getBranchColor(selectedBranchIndex) : "#3ecf8e";
+    const branchSwitcherEnabled = canSwitchBranches(employee?.role);
+    const canCreateBranch = employee?.role === "super-admin";
 
     return (
         <>
@@ -354,8 +366,8 @@ const AppSidebarContent = React.memo(function AppSidebarContent({
 
                 {/* Header - Branch Selector */}
                 <SidebarHeader className="border-b border-sidebar-border p-3">
-                    {/* Super-admin: Full branch selector dropdown */}
-                    {employee?.role === "super-admin" ? (
+                    {/* Super-admin/operator: Full branch selector dropdown */}
+                    {branchSwitcherEnabled ? (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button
@@ -420,14 +432,18 @@ const AppSidebarContent = React.memo(function AppSidebarContent({
                                         </DropdownMenuItem>
                                     ))
                                 )}
-                                <DropdownMenuSeparator className="bg-border" />
-                                <DropdownMenuItem
-                                    onClick={() => setIsCreateDialogOpen(true)}
-                                    className="text-primary focus:bg-primary/10 focus:text-primary"
-                                >
-                                    <Plus className="mr-2 h-4 w-4" />
-                                    Yangi filial qo&apos;shish
-                                </DropdownMenuItem>
+                                {canCreateBranch && (
+                                    <>
+                                        <DropdownMenuSeparator className="bg-border" />
+                                        <DropdownMenuItem
+                                            onClick={() => setIsCreateDialogOpen(true)}
+                                            className="text-primary focus:bg-primary/10 focus:text-primary"
+                                        >
+                                            <Plus className="mr-2 h-4 w-4" />
+                                            Yangi filial qo&apos;shish
+                                        </DropdownMenuItem>
+                                    </>
+                                )}
                             </DropdownMenuContent>
                         </DropdownMenu>
                     ) : (
@@ -517,7 +533,7 @@ const AppSidebarContent = React.memo(function AppSidebarContent({
                                             {employee?.name || user?.user_metadata?.full_name || "Foydalanuvchi"}
                                         </span>
                                         <span className="truncate text-xs text-muted-foreground w-full">
-                                            {employee?.role === "super-admin" ? "Super Admin" : "Manager"}
+                                            {getRoleLabel(employee?.role)}
                                         </span>
                                     </div>
                                 )}
@@ -621,9 +637,9 @@ export function AppSidebar({
     const { data: employee, isLoading: employeeLoading } = useEmployee();
     const initializedRef = React.useRef(false);
 
-    const isAdmin = employee?.role === "super-admin";
+    const branchSwitcherEnabled = canSwitchBranches(employee?.role);
 
-    // Fetch branches (only needed for super-admin)
+    // Fetch branches (only needed for users who can switch branches)
     const fetchBranches = React.useCallback(async () => {
         try {
             const { data, error } = await supabase
@@ -655,8 +671,8 @@ export function AppSidebar({
 
             initializedRef.current = true;
 
-            if (isAdmin) {
-                // Super-admin: Fetch all branches and allow selection
+            if (branchSwitcherEnabled) {
+                // Super-admin/operator: Fetch all branches and allow selection
                 const data = await fetchBranches();
                 if (data && data.length > 0) {
                     const savedBranchId = localStorage.getItem("selectedBranchId");
@@ -674,14 +690,14 @@ export function AppSidebar({
         };
 
         init();
-    }, [fetchBranches, isAdmin, employee, employeeLoading]);
+    }, [fetchBranches, branchSwitcherEnabled, employee, employeeLoading]);
 
-    // Save selected branch to localStorage (only for super-admin)
+    // Save selected branch to localStorage (only for users who can switch branches)
     React.useEffect(() => {
-        if (selectedBranch && isAdmin) {
+        if (selectedBranch && branchSwitcherEnabled) {
             localStorage.setItem("selectedBranchId", selectedBranch.id);
         }
-    }, [selectedBranch, isAdmin]);
+    }, [selectedBranch, branchSwitcherEnabled]);
 
     const addBranch = React.useCallback((branch: Branch) => {
         setBranches((prev) => [...prev, branch].sort((a, b) => a.name.localeCompare(b.name)));

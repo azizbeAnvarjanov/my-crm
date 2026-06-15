@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import {
     Calendar,
     Headphones,
@@ -13,23 +12,15 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useBranch } from "@/components/app-sidebar";
 import { useEmployee } from "@/hooks/use-employee";
 import {
     CallsFilter,
-    Employee,
     EmployeeCallStats,
     formatDuration,
+    useCallsEmployees,
     useCallsStatsByEmployee,
 } from "@/hooks/use-calls";
-import { createClient } from "@/lib/supabase/client";
-
-type ManagerRow = {
-    id: number | string;
-    name: string;
-    role: string;
-    user_id: string | null;
-    employee_id: string | null;
-};
 
 function DonutChart({
     answered,
@@ -193,46 +184,34 @@ function EmployeeStatsRow({
 export default function CallsStatsPage() {
     const router = useRouter();
     const { data: currentEmployee, isLoading: employeeLoading } = useEmployee();
+    const { selectedBranch, loading: branchLoading } = useBranch();
+    const branchId = selectedBranch?.id ?? null;
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
 
     const isAdmin = currentEmployee?.role === "super-admin";
 
-    const { data: managers = [], isLoading: managersLoading } = useQuery({
-        queryKey: ["callsStatsManagers"],
-        queryFn: async () => {
-            const supabase = createClient();
-            const { data, error } = await supabase
-                .from("xodimlar")
-                .select("id, name, role, user_id, employee_id")
-                .eq("role", "manager")
-                .order("name", { ascending: true });
+    const { data: employees = [], isLoading: employeesLoading } = useCallsEmployees(branchId);
 
-            if (error) throw error;
-
-            return (data || []).map((manager: ManagerRow) => ({
-                id: String(manager.id),
-                name: manager.name,
-                role: manager.role,
-                user_id: manager.user_id ? String(manager.user_id) : undefined,
-                employee_id: manager.employee_id ? String(manager.employee_id) : undefined,
-            })) as Employee[];
-        },
-        enabled: isAdmin,
-    });
+    const employeesForStats = useMemo(
+        () => employees.filter((employee) => Boolean(employee.user_id?.trim())),
+        [employees]
+    );
 
     const filter: CallsFilter = useMemo(() => ({
         startDate: startDate || undefined,
         endDate: endDate || undefined,
     }), [startDate, endDate]);
 
-    const { data: employeeStats = [], isLoading: statsLoading } = useCallsStatsByEmployee(filter, managers);
+    const { data: employeeStats = [], isLoading: statsLoading } = useCallsStatsByEmployee(filter, employeesForStats);
 
     const handleRecordingsClick = (employeeId: string) => {
-        router.push(`/calls-2?employeeId=${employeeId}`);
+        router.push(`/calls?employeeId=${employeeId}`);
     };
 
-    if (employeeLoading || managersLoading) {
+    const callsStatsLoading = employeeLoading || branchLoading || Boolean(isAdmin && branchId && employeesLoading);
+
+    if (callsStatsLoading) {
         return (
             <div className="flex min-h-screen items-center justify-center">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -258,6 +237,24 @@ export default function CallsStatsPage() {
         );
     }
 
+    if (!branchId) {
+        return (
+            <div className="min-h-screen p-6 flex items-center justify-center">
+                <Card className="max-w-md border-border bg-card">
+                    <CardContent className="pt-6 text-center">
+                        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                            <Phone className="h-6 w-6 text-primary" />
+                        </div>
+                        <h2 className="mb-2 text-xl font-semibold text-card-foreground">Filial tanlang</h2>
+                        <p className="text-muted-foreground">
+                            Statistikani ko&apos;rish uchun chapdagi sidebar orqali filialni tanlang.
+                        </p>
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-screen space-y-6 p-6 lg:p-8">
             <div className="flex items-center gap-3">
@@ -267,7 +264,7 @@ export default function CallsStatsPage() {
                 <div>
                     <h1 className="text-2xl font-bold text-foreground">Calls Stats</h1>
                     <p className="text-sm text-muted-foreground">
-                        Managerlar bo&rsquo;yicha yengil call statistika
+                        {selectedBranch?.name} filiali xodimlari bo&apos;yicha call statistika
                     </p>
                 </div>
             </div>
